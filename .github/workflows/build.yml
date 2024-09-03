@@ -3,15 +3,19 @@ name: Go Build and Test
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   build:
+    runs-on: windows-latest
 
-    runs-on: ubuntu-latest
+    env:
+      GOPATH: C:\gopath
+      GOARCH: 386
+      GOOS: windows
 
     steps:
     - name: Checkout code
@@ -22,37 +26,47 @@ jobs:
       with:
         go-version: '1.20.5'
 
+    - name: Set up PATH
+      run: |
+        echo %PATH%
+        echo %GOPATH%
+        set PATH=%GOPATH%\bin;C:\go\bin;%PATH%
+
     - name: Install dependencies
       run: go mod download
 
     - name: Run tests
       run: go test -v ./...
 
-    - name: Build each package
-      run: |
-        for pkg in $(go list ./...); do
-          go build -v -o "$(basename $pkg).exe" $pkg
-        done
+    - name: Build project
+      run: go build
 
-    - name: Archive web files
+    - name: Archive web files and build output
       run: |
-        7z a god_of_war_browser.zip -r web -x!*.go
-        7z a god_of_war_browser.zip *.exe
+        7z a god_of_war_browser.zip -r C:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
+        7z a god_of_war_browser.zip god_of_war_browser.exe
         7z a god_of_war_browser.zip font_aliases.cfg
         7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
         7z a god_of_war_browser.zip LOCALIZATION.md
         7z a god_of_war_browser.zip README.md
         7z a god_of_war_browser.zip hashes.dump.txt
         7z a god_of_war_browser.zip strings.dump.txt
+        ren god_of_war_browser.zip god_of_war_browser.%GITHUB_RUN_NUMBER%.zip
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
-        name: god_of_war_browser
-        path: god_of_war_browser.zip
+        name: archive
+        path: god_of_war_browser.%GITHUB_RUN_NUMBER%.zip
 
-    - name: Set up webhook (optional)
+    - name: Send success webhook (optional)
+      if: success()
       run: |
         curl -LO https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1
         pwsh send.ps1 success ${{ secrets.WEBHOOK_URL }}
-      if: always()
+
+    - name: Send failure webhook (optional)
+      if: failure()
+      run: |
+        curl -LO https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1
+        pwsh send.ps1 failure ${{ secrets.WEBHOOK_URL }}
