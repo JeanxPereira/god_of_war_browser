@@ -1,0 +1,55 @@
+name: Go Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20.5'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build the project
+      run: go build -v -o god_of_war_browser.exe ./...
+
+    - name: Archive web files
+      run: |
+        7z a god_of_war_browser.zip -r web -x!*.go
+        7z a god_of_war_browser.zip god_of_war_browser.exe
+        7z a god_of_war_browser.zip font_aliases.cfg
+        7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
+        7z a god_of_war_browser.zip LOCALIZATION.md
+        7z a god_of_war_browser.zip README.md
+        7z a god_of_war_browser.zip hashes.dump.txt
+        7z a god_of_war_browser.zip strings.dump.txt
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: god_of_war_browser
+        path: god_of_war_browser.zip
+
+    - name: Set up webhook (optional)
+      run: |
+        curl -LO https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1
+        pwsh send.ps1 success ${{ secrets.WEBHOOK_URL }}
+      if: always()
