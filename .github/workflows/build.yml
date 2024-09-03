@@ -1,10 +1,7 @@
-name: Go Build and Test
+name: Build and Deploy
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches:
       - main
 
@@ -19,31 +16,31 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.20.5'
+        go-version: 'latest'
 
-    - name: Set up PATH
+    - name: Set up environment
       run: |
-        echo %PATH%
         echo %GOPATH%
+        echo %GOARCH%
+        echo %GOOS%
         set PATH=%GOPATH%\bin;C:\go\bin;%PATH%
+        go version
+        go env
 
-    - name: Install dependencies
-      run: go mod download
-
-    - name: Run tests
+    - name: Run Tests
       run: go test -v ./...
 
-    - name: Build project
+    - name: Build Project
       run: go build
 
-    - name: Archive web files and build output
+    - name: Create Archive
       run: |
-        7z a god_of_war_browser.zip -r C:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
+        7z a god_of_war_browser.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
         7z a god_of_war_browser.zip god_of_war_browser.exe
         7z a god_of_war_browser.zip font_aliases.cfg
         7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
@@ -51,22 +48,31 @@ jobs:
         7z a god_of_war_browser.zip README.md
         7z a god_of_war_browser.zip hashes.dump.txt
         7z a god_of_war_browser.zip strings.dump.txt
-        ren god_of_war_browser.zip god_of_war_browser.%GITHUB_RUN_NUMBER%.zip
+        mv god_of_war_browser.zip god_of_war_browser.${{ github.run_number }}.zip
 
-    - name: Upload artifact
+    - name: Upload Artifact
       uses: actions/upload-artifact@v3
       with:
         name: archive
-        path: god_of_war_browser.%GITHUB_RUN_NUMBER%.zip
+        path: god_of_war_browser.${{ github.run_number }}.zip
 
-    - name: Send success webhook (optional)
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ github.run_number }}
+        name: god_of_war_browser.${{ github.run_number }}
+        body: Automatic release ${{ github.run_number }}
+        files: god_of_war_browser.${{ github.run_number }}.zip
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Notify Success on Discord
       if: success()
       run: |
-        curl -LO https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1
-        pwsh send.ps1 success ${{ secrets.WEBHOOK_URL }}
+        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
+        .\send.ps1 success ${{ secrets.WEBHOOK_URL }}
 
-    - name: Send failure webhook (optional)
+    - name: Notify Failure on Discord
       if: failure()
       run: |
-        curl -LO https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1
-        pwsh send.ps1 failure ${{ secrets.WEBHOOK_URL }}
+        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
+        .\send.ps1 failure ${{ secrets.WEBHOOK_URL }}
