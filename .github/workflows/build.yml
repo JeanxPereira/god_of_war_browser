@@ -3,10 +3,10 @@ name: Go Build and Test
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   build:
@@ -28,13 +28,16 @@ jobs:
     - name: Run tests
       run: go test -v ./...
 
-    - name: Build the project
-      run: go build -v -o god_of_war_browser.exe ./...
+    - name: Build each package
+      run: |
+        for pkg in $(go list ./...); do
+          go build -v -o "$(basename $pkg).exe" $pkg
+        done
 
     - name: Archive web files
       run: |
         7z a god_of_war_browser.zip -r web -x!*.go
-        7z a god_of_war_browser.zip god_of_war_browser.exe
+        7z a god_of_war_browser.zip *.exe
         7z a god_of_war_browser.zip font_aliases.cfg
         7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
         7z a god_of_war_browser.zip LOCALIZATION.md
