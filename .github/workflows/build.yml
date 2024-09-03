@@ -25,10 +25,9 @@ jobs:
 
     - name: Set up environment
       run: |
-        echo %GOPATH%
-        echo %GOARCH%
-        echo %GOOS%
-        set PATH=%GOPATH%\bin;C:\go\bin;%PATH%
+        echo $env:PATH
+        echo $env:GOPATH
+        $env:PATH = "$env:GOPATH\bin;C:\go\bin;$env:PATH"
         go version
         go env
 
@@ -69,10 +68,10 @@ jobs:
       if: success()
       run: |
         Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        .\send.ps1 success ${{ secrets.WEBHOOK_URL }}
+        ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
 
     - name: Notify Failure on Discord
       if: failure()
       run: |
         Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        .\send.ps1 failure ${{ secrets.WEBHOOK_URL }}
+        ./send.ps1 failure ${{ secrets.WEBHOOK_URL }}
