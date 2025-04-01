@@ -85,11 +85,12 @@ jobs:
                     SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
                   }
                 } catch {
-                  Write-Host "Skipping tag $TAG: $_"
+                  # Corrigi o problema com $_ escapando corretamente
+                  Write-Host ("Skipping tag " + $TAG + ": " + $_.Exception.Message)
                   $null # Return null for filtering
                 }
               } else {
-                Write-Host "Skipping tag $TAG: Doesn't have 3 components"
+                Write-Host ("Skipping tag " + $TAG + ": Doesn't have 3 components")
                 $null # Return null for filtering
               }
             } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
@@ -145,7 +146,7 @@ jobs:
         if (-Not (Test-Path "web" -PathType Container)) {
           Write-Host "Web folder not found, creating it..."
           New-Item -ItemType Directory -Path "web" -Force
-          Write-Host "⚠️ Created empty web folder"
+          Write-Host "Created empty web folder"
         } else {
           Write-Host "✅ Web folder verified"
         }
@@ -162,12 +163,13 @@ jobs:
           if (-Not (Test-Path $FILE)) {
             $MISSING_CONFIG += $FILE
           } else {
-            Write-Host "✅ Config file verified: $FILE"
+            Write-Host ("✅ Config file verified: " + $FILE)
           }
         }
         
         if ($MISSING_CONFIG.Count -gt 0) {
-          Write-Host "⚠️ Some config files are missing: $($MISSING_CONFIG -join ', ')"
+          $missingFiles = $MISSING_CONFIG -join ', '
+          Write-Host ("Some config files are missing: " + $missingFiles)
           Write-Host "Continuing anyway as these may not be critical"
         } else {
           Write-Host "All config files verified successfully"
@@ -175,14 +177,14 @@ jobs:
     
     - name: Create Archive
       run: |
-        $VERSION="${{ steps.version.outputs.VERSION }}"
+        $VERSION = "${{ steps.version.outputs.VERSION }}"
         
         # Create zip file with requested format
-        $FILENAME="god_of_war_browser-$VERSION.zip"
-        Write-Host "Creating archive: $FILENAME"
+        $FILENAME = "god_of_war_browser-$VERSION.zip"
+        Write-Host ("Creating archive: " + $FILENAME)
         
         # Add main executable (required)
-        7z a "$FILENAME" god_of_war_browser.exe
+        7z a $FILENAME god_of_war_browser.exe
         Write-Host "Added executable to archive"
         
         # Add web folder (always include, even if empty)
@@ -190,21 +192,21 @@ jobs:
           # Count files in web folder
           $webFileCount = (Get-ChildItem -Path "web" -Recurse -File).Count
           if ($webFileCount -gt 0) {
-            Write-Host "Adding $webFileCount files from web folder to archive"
-            7z a "$FILENAME" -r web -x!*.go
+            Write-Host ("Adding " + $webFileCount + " files from web folder to archive")
+            7z a $FILENAME -r web -x!*.go
           } else {
             Write-Host "Web folder is empty, adding empty directory"
             # Create empty directory in zip
             New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
-            7z a "$FILENAME" web-temp
-            7z rn "$FILENAME" web-temp web
+            7z a $FILENAME web-temp
+            7z rn $FILENAME web-temp web
             Remove-Item -Path "web-temp" -Force
           }
         } else {
           Write-Host "Web folder not found, creating empty directory in archive"
           New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
-          7z a "$FILENAME" web-temp
-          7z rn "$FILENAME" web-temp web
+          7z a $FILENAME web-temp
+          7z rn $FILENAME web-temp web
           Remove-Item -Path "web-temp" -Force
         }
         
@@ -216,10 +218,10 @@ jobs:
         
         foreach ($FILE in $CONFIG_FILES) {
           if (Test-Path $FILE) {
-            7z a "$FILENAME" $FILE
-            Write-Host "Added config file to archive: $FILE"
+            7z a $FILENAME $FILE
+            Write-Host ("Added config file to archive: " + $FILE)
           } else {
-            Write-Host "Config file not found, skipping: $FILE"
+            Write-Host ("Config file not found, skipping: " + $FILE)
           }
         }
         
@@ -233,15 +235,16 @@ jobs:
         
         foreach ($FILE in $OPTIONAL_FILES) {
           if (Test-Path $FILE) {
-            7z a "$FILENAME" $FILE
-            Write-Host "Added optional file to archive: $FILE"
+            7z a $FILENAME $FILE
+            Write-Host ("Added optional file to archive: " + $FILE)
           }
         }
         
         # Verify archive was created successfully
         if (Test-Path $FILENAME) {
           $archiveSize = (Get-Item $FILENAME).Length
-          Write-Host "Archive created successfully: $FILENAME ($([math]::Round($archiveSize/1MB, 2)) MB)"
+          $sizeMB = [math]::Round($archiveSize/1MB, 2)
+          Write-Host ("Archive created successfully: " + $FILENAME + " (" + $sizeMB + " MB)")
         } else {
           Write-Error "Failed to create archive: $FILENAME"
           exit 1
