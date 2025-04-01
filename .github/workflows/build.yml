@@ -285,15 +285,3 @@ jobs:
         make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Notify Success on Discord
-      if: success() && secrets.WEBHOOK_URL != ''
-      run: |
-        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
-    
-    - name: Notify Failure on Discord
-      if: failure() && secrets.WEBHOOK_URL != ''
-      run: |
-        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        ./send.ps1 failure ${{ secrets.WEBHOOK_URL }}
