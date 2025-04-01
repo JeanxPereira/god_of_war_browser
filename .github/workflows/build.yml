@@ -20,6 +20,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        fetch-tags: true
     
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -43,13 +44,38 @@ jobs:
     - name: Generate Version
       id: version
       run: |
-        # Usar formato de versão v0.0.x
-        if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -match "^v") {
-          $VERSION="${{ github.ref_name }}"
+        # Check if there's a previous tag/version
+        git fetch --tags
+        $LAST_TAG = $(git tag -l "v*" | Sort-Object -Property {[version]::new($_.TrimStart("v").PadRight(8,'0'))} -Descending | Select-Object -First 1)
+        
+        # If no previous tag exists, start with v0.0.1
+        if ([string]::IsNullOrEmpty($LAST_TAG)) {
+          $VERSION="v0.0.1"
         } else {
-          # Formato: v0.0.{buildNumber}
-          $VERSION="v0.0.${{ github.run_number }}"
+          # Extract version components
+          $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
+          $MAJOR = [int]$COMPONENTS[0]
+          $MINOR = [int]$COMPONENTS[1]
+          $PATCH = [int]$COMPONENTS[2]
+          
+          # Increment PATCH
+          $PATCH++
+          
+          # If PATCH > 9, increment MINOR and reset PATCH
+          if ($PATCH -gt 9) {
+            $MINOR++
+            $PATCH = 0
+          }
+          
+          # If MINOR > 9, increment MAJOR and reset MINOR
+          if ($MINOR -gt 9) {
+            $MAJOR++
+            $MINOR = 0
+          }
+          
+          $VERSION = "v$MAJOR.$MINOR.$PATCH"
         }
+        
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
         echo "Version: $VERSION"
     
@@ -57,21 +83,46 @@ jobs:
       run: |
         $VERSION="${{ steps.version.outputs.VERSION }}"
         
-        # Criar arquivo zip com o formato solicitado: god_of_war_browser-[v0.0.0].zip
+        # Create zip file with requested format: god_of_war_browser-v0.1.0.zip
         $FILENAME="god_of_war_browser-$VERSION.zip"
         
-        # Criar arquivo zip inicial com o diretório web
-        # Verificar se o diretório web existe no diretório do projeto
+        # Ensure the web folder is included in the artifact
+        $REPO_DIR = $(Get-Location)
+        Write-Host "Current directory: $REPO_DIR"
+        
         if (Test-Path "web") {
+          Write-Host "Web folder found in current directory"
           7z a "$FILENAME" -r web -x!*.go
         } elseif (Test-Path "c:\gopath\src\github.com\mogaika\god_of_war_browser\web") {
+          Write-Host "Web folder found in gopath"
           7z a "$FILENAME" -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
         } else {
-          Write-Error "Diretório web não encontrado"
-          exit 1
+          Write-Host "Web folder not found directly. Attempting to get from repository..."
+          
+          if (-Not (Test-Path "$REPO_DIR\web")) {
+            New-Item -ItemType Directory -Path "$REPO_DIR\web" -Force
+            
+            try {
+              git clone --depth=1 --filter=blob:none --sparse https://github.com/mogaika/god_of_war_browser.git temp-repo
+              cd temp-repo
+              git sparse-checkout set web
+              Copy-Item -Path "web\*" -Destination "$REPO_DIR\web" -Recurse -Force
+              cd $REPO_DIR
+              Remove-Item -Path "temp-repo" -Recurse -Force
+              
+              7z a "$FILENAME" -r web -x!*.go
+              Write-Host "Web folder successfully obtained from repository"
+            } catch {
+              Write-Error "Unable to get web folder: $_"
+              exit 1
+            }
+          } else {
+            Write-Error "Web directory not found in any expected location"
+            exit 1
+          }
         }
         
-        # Adicionar os outros arquivos ao zip
+        # Add other files to the zip
         7z a "$FILENAME" god_of_war_browser.exe
         7z a "$FILENAME" font_aliases.cfg
         7z a "$FILENAME" font_aliases.ru.cp1251.cfg
@@ -87,6 +138,17 @@ jobs:
       with:
         name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
         path: ${{ env.ARCHIVE_PATH }}
+    
+    - name: Tag Version
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Configure git for creating a new tag
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git tag ${{ steps.version.outputs.VERSION }}
+        git push origin ${{ steps.version.outputs.VERSION }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
