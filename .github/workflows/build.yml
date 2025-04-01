@@ -9,7 +9,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
-  workflow_dispatch:  # Permite execução manual
+  workflow_dispatch:
 
 jobs:
   build:
@@ -59,7 +59,77 @@ jobs:
           git fetch --tags
           
           # Get all semver tags (v0.0.1 format) and filter out non-standard formats
-          $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+
+          $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+          
+          # Get last valid tag or use v0.0.0 if none exists
+          if ($TAGS.Count -eq 0) {
+            Write-Host "No standard version tags found. Starting with v0.0.1"
+            $VERSION = "v0.0.1"
+          } else {
+            # Sort tags safely by extracting numeric components
+            $SORTED_TAGS = $TAGS | ForEach-Object {
+              $TAG = $_
+              $COMPONENTS = $TAG.TrimStart("v").Split(".")
+              
+              # Ensure we have 3 components
+              if ($COMPONENTS.Count -ge 3) {
+                # Try to parse as integers
+                try {
+                  $MAJOR = [int]$COMPONENTS[0]
+                  $MINOR = [int]$COMPONENTS[1] 
+                  $PATCH = [int]$COMPONENTS[2]
+                  
+                  # Create custom object for sorting
+                  [PSCustomObject]@{
+                    Tag = $TAG
+                    SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
+                  }
+                } catch {
+                  Write-Host "Skipping tag $TAG: $_"
+                  $null # Return null for filtering
+                }
+              } else {
+                Write-Host "Skipping tag $TAG: Doesn't have 3 components"
+                $null # Return null for filtering
+              }
+            } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
+            
+            # Get the highest version tag
+            if ($SORTED_TAGS.Count -gt 0) {
+              $LAST_TAG = $SORTED_TAGS[0].Tag
+              Write-Host "Last valid tag: $LAST_TAG"
+              
+              # Extract version components
+              $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
+              $MAJOR = [int]$COMPONENTS[0]
+              $MINOR = [int]$COMPONENTS[1]
+              $PATCH = [int]$COMPONENTS[2]
+              
+              # Increment PATCH
+              $PATCH++
+              
+              # If PATCH > 9, increment MINOR and reset PATCH
+              if ($PATCH -gt 9) {
+                $MINOR++
+                $PATCH = 0
+              }
+              
+              # If MINOR > 9, increment MAJOR and reset MINOR
+              if ($MINOR -gt 9) {
+                $MAJOR++
+                $MINOR = 0
+              }
+              
+              $VERSION = "v$MAJOR.$MINOR.$PATCH"
+            } else {
+              Write-Host "No valid tags found after filtering. Starting with v0.0.1"
+              $VERSION = "v0.0.1"
+            }
+          }
+        }
+        
+        echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+        echo "Generated version: $VERSION"
     
     - name: Verify required files
       run: |
@@ -212,192 +282,18 @@ jobs:
         files: ${{ env.ARCHIVE_PATH }}
         draft: false
         prerelease: false
-        make_latest: true  # Marca cada nova release como "latest"
+        make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Notify Success on Discord
-      if: success()
+      if: success() && secrets.WEBHOOK_URL != ''
       run: |
         Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
         ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
     
     - name: Notify Failure on Discord
-      if: failure()
-      run: |
-        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        ./send.ps1 failure ${{ secrets.WEBHOOK_URL }}
- }
-          
-          # Get last valid tag or use v0.0.0 if none exists
-          if ($TAGS.Count -eq 0) {
-            Write-Host "No standard version tags found. Starting with v0.0.1"
-            $VERSION = "v0.0.1"
-          } else {
-            # Sort tags safely by extracting numeric components
-            $SORTED_TAGS = $TAGS | ForEach-Object {
-              $TAG = $_
-              $COMPONENTS = $TAG.TrimStart("v").Split(".")
-              
-              # Ensure we have 3 components
-              if ($COMPONENTS.Count -ge 3) {
-                # Try to parse as integers
-                try {
-                  $MAJOR = [int]$COMPONENTS[0]
-                  $MINOR = [int]$COMPONENTS[1] 
-                  $PATCH = [int]$COMPONENTS[2]
-                  
-                  # Create custom object for sorting
-                  [PSCustomObject]@{
-                    Tag = $TAG
-                    SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
-                  }
-                } catch {
-                  Write-Host "Skipping tag $TAG: $_"
-                  $null # Return null for filtering
-                }
-              } else {
-                Write-Host "Skipping tag $TAG: Doesn't have 3 components"
-                $null # Return null for filtering
-              }
-            } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
-            
-            # Get the highest version tag
-            if ($SORTED_TAGS.Count -gt 0) {
-              $LAST_TAG = $SORTED_TAGS[0].Tag
-              Write-Host "Last valid tag: $LAST_TAG"
-              
-              # Extract version components
-              $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
-              $MAJOR = [int]$COMPONENTS[0]
-              $MINOR = [int]$COMPONENTS[1]
-              $PATCH = [int]$COMPONENTS[2]
-              
-              # Increment PATCH
-              $PATCH++
-              
-              # If PATCH > 9, increment MINOR and reset PATCH
-              if ($PATCH -gt 9) {
-                $MINOR++
-                $PATCH = 0
-              }
-              
-              # If MINOR > 9, increment MAJOR and reset MINOR
-              if ($MINOR -gt 9) {
-                $MAJOR++
-                $MINOR = 0
-              }
-              
-              $VERSION = "v$MAJOR.$MINOR.$PATCH"
-            } else {
-              Write-Host "No valid tags found after filtering. Starting with v0.0.1"
-              $VERSION = "v0.0.1"
-            }
-          }
-        }
-        
-        echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
-        echo "Generated version: $VERSION"
-    
-    - name: Verify required files
-      run: |
-        $REQUIRED_FILES = @(
-          "god_of_war_browser.exe",
-          "web",
-          "font_aliases.cfg",
-          "font_aliases.ru.cp1251.cfg"
-        )
-        
-        $MISSING_FILES = @()
-        
-        foreach ($FILE in $REQUIRED_FILES) {
-          if (-Not (Test-Path $FILE)) {
-            $MISSING_FILES += $FILE
-          }
-        }
-        
-        if ($MISSING_FILES.Count -gt 0) {
-          Write-Error "Missing required files: $($MISSING_FILES -join ', ')"
-          exit 1
-        } else {
-          Write-Host "All required files verified successfully"
-        }
-    
-    - name: Create Archive
-      run: |
-        $VERSION="${{ steps.version.outputs.VERSION }}"
-        
-        # Create zip file with requested format
-        $FILENAME="god_of_war_browser-$VERSION.zip"
-        
-        # Create the archive with all required files
-        7z a "$FILENAME" -r web -x!*.go
-        7z a "$FILENAME" god_of_war_browser.exe
-        7z a "$FILENAME" font_aliases.cfg
-        7z a "$FILENAME" font_aliases.ru.cp1251.cfg
-        
-        # Add optional files if they exist
-        $OPTIONAL_FILES = @(
-          "LOCALIZATION.md",
-          "README.md",
-          "hashes.dump.txt",
-          "strings.dump.txt"
-        )
-        
-        foreach ($FILE in $OPTIONAL_FILES) {
-          if (Test-Path $FILE) {
-            7z a "$FILENAME" $FILE
-            Write-Host "Added optional file: $FILE"
-          }
-        }
-        
-        echo "ARCHIVE_PATH=$FILENAME" >> $env:GITHUB_ENV
-    
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
-        path: ${{ env.ARCHIVE_PATH }}
-        retention-days: 30
-    
-    - name: Tag Version
-      if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
-      run: |
-        # Configure git for creating a new tag
-        git config --global user.name 'GitHub Actions'
-        git config --global user.email 'actions@github.com'
-        git tag ${{ steps.version.outputs.VERSION }}
-        git push origin ${{ steps.version.outputs.VERSION }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: success()
-      with:
-        tag_name: ${{ steps.version.outputs.VERSION }}
-        name: God of War Browser ${{ steps.version.outputs.VERSION }}
-        body: |
-          God of War Browser ${{ steps.version.outputs.VERSION }}
-          
-          Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-          Build: ${{ github.run_number }}
-          Date: ${{ github.event.head_commit.timestamp }}
-        files: ${{ env.ARCHIVE_PATH }}
-        draft: false
-        prerelease: false
-        make_latest: true  # Marca cada nova release como "latest"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Notify Success on Discord
-      if: success()
-      run: |
-        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
-        ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
-    
-    - name: Notify Failure on Discord
-      if: failure()
+      if: failure() && secrets.WEBHOOK_URL != ''
       run: |
         Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
         ./send.ps1 failure ${{ secrets.WEBHOOK_URL }}
