@@ -1,4 +1,5 @@
 name: Build and Deploy
+
 on:
   push:
     branches:
@@ -9,10 +10,14 @@ on:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
+    name: Test
     runs-on: windows-latest
     env:
       GOPATH: C:\gopath
@@ -21,239 +26,352 @@ jobs:
       CGO_ENABLED: 0
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        fetch-tags: true
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          cache: true
+      
+      - name: Verify environment
+        run: |
+          echo "PATH: $env:PATH"
+          echo "GOPATH: $env:GOPATH"
+          $env:PATH = "$env:GOPATH\bin;C:\go\bin;$env:PATH"
+          go version
+          go env
+      
+      - name: Run Tests
+        run: go test -v ./...
+
+  build:
+    name: Build
+    needs: test
+    runs-on: windows-latest
+    env:
+      GOPATH: C:\gopath
+      GOARCH: 386
+      GOOS: windows
+      CGO_ENABLED: 0
     
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.20'
-        cache: true
-    
-    - name: Verify environment
-      run: |
-        echo "PATH: $env:PATH"
-        echo "GOPATH: $env:GOPATH"
-        $env:PATH = "$env:GOPATH\bin;C:\go\bin;$env:PATH"
-        go version
-        go env
-    
-    - name: Run Tests
-      run: go test -v ./...
-    
-    - name: Build Project
-      run: go build
-    
-    - name: Generate Version
-      id: version
-      run: |
-        if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
-          $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
-        } else {
-          git fetch --tags
-          $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
-          if ($TAGS.Count -eq 0) {
-            Write-Host "No standard version tags found. Starting with v0.0.1"
-            $VERSION = "v0.0.1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          cache: true
+      
+      - name: Build Project
+        run: go build
+      
+      - name: Generate Version
+        id: version
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
           } else {
-            $SORTED_TAGS = $TAGS | ForEach-Object {
-              $TAG = $_
-              $COMPONENTS = $TAG.TrimStart("v").Split(".")
-              if ($COMPONENTS.Count -ge 3) {
-                try {
-                  $MAJOR = [int]$COMPONENTS[0]
-                  $MINOR = [int]$COMPONENTS[1] 
-                  $PATCH = [int]$COMPONENTS[2]
-                  [PSCustomObject]@{
-                    Tag = $TAG
-                    SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
+            git fetch --tags
+            $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+            if ($TAGS.Count -eq 0) {
+              Write-Host "No standard version tags found. Starting with v0.0.1"
+              $VERSION = "v0.0.1"
+            } else {
+              $SORTED_TAGS = $TAGS | ForEach-Object {
+                $TAG = $_
+                $COMPONENTS = $TAG.TrimStart("v").Split(".")
+                if ($COMPONENTS.Count -ge 3) {
+                  try {
+                    $MAJOR = [int]$COMPONENTS[0]
+                    $MINOR = [int]$COMPONENTS[1] 
+                    $PATCH = [int]$COMPONENTS[2]
+                    [PSCustomObject]@{
+                      Tag = $TAG
+                      SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
+                    }
+                  } catch {
+                    Write-Host ("Skipping tag " + $TAG + ": " + $_.Exception.Message)
+                    $null
                   }
-                } catch {
-                  Write-Host ("Skipping tag " + $TAG + ": " + $_.Exception.Message)
+                } else {
+                  Write-Host ("Skipping tag " + $TAG + ": Doesn't have 3 components")
                   $null
                 }
+              } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
+              if ($SORTED_TAGS.Count -gt 0) {
+                $LAST_TAG = $SORTED_TAGS[0].Tag
+                Write-Host "Last valid tag: $LAST_TAG"
+                $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
+                $MAJOR = [int]$COMPONENTS[0]
+                $MINOR = [int]$COMPONENTS[1]
+                $PATCH = [int]$COMPONENTS[2]
+                $PATCH++
+                if ($PATCH -gt 9) {
+                  $MINOR++
+                  $PATCH = 0
+                }
+                if ($MINOR -gt 9) {
+                  $MAJOR++
+                  $MINOR = 0
+                }
+                
+                $VERSION = "v$MAJOR.$MINOR.$PATCH"
               } else {
-                Write-Host ("Skipping tag " + $TAG + ": Doesn't have 3 components")
-                $null
+                Write-Host "No valid tags found after filtering. Starting with v0.0.1"
+                $VERSION = "v0.0.1"
               }
-            } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
-            if ($SORTED_TAGS.Count -gt 0) {
-              $LAST_TAG = $SORTED_TAGS[0].Tag
-              Write-Host "Last valid tag: $LAST_TAG"
-              $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
-              $MAJOR = [int]$COMPONENTS[0]
-              $MINOR = [int]$COMPONENTS[1]
-              $PATCH = [int]$COMPONENTS[2]
-              $PATCH++
-              if ($PATCH -gt 9) {
-                $MINOR++
-                $PATCH = 0
-              }
-              if ($MINOR -gt 9) {
-                $MAJOR++
-                $MINOR = 0
-              }
-              
-              $VERSION = "v$MAJOR.$MINOR.$PATCH"
+            }
+          }
+          
+          echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+      
+      - name: Verify required files
+        run: |
+          if (-Not (Test-Path "god_of_war_browser.exe")) {
+            Write-Error "Missing executable: god_of_war_browser.exe"
+            exit 1
+          } else {
+            Write-Host "Executable verified: god_of_war_browser.exe"
+          }
+          if (-Not (Test-Path "web" -PathType Container)) {
+            Write-Host "Web folder not found, creating it..."
+            New-Item -ItemType Directory -Path "web" -Force
+            Write-Host "Created empty web folder"
+          } else {
+            Write-Host "Web folder verified"
+            $webFiles = Get-ChildItem -Path "web" -Recurse | Measure-Object | Select-Object -ExpandProperty Count
+            Write-Host "Found $webFiles items in web folder"
+          }
+          $CONFIG_FILES = @(
+            "font_aliases.cfg",
+            "font_aliases.ru.cp1251.cfg"
+          )
+          
+          $MISSING_CONFIG = @()
+          
+          foreach ($FILE in $CONFIG_FILES) {
+            if (-Not (Test-Path $FILE)) {
+              $MISSING_CONFIG += $FILE
             } else {
-              Write-Host "No valid tags found after filtering. Starting with v0.0.1"
+              Write-Host ("Config file verified: " + $FILE)
+            }
+          }
+          
+          if ($MISSING_CONFIG.Count -gt 0) {
+            $missingFiles = $MISSING_CONFIG -join ', '
+            Write-Host ("Some config files are missing: " + $missingFiles)
+            Write-Host "Continuing anyway as these may not be critical"
+          } else {
+            Write-Host "All config files verified successfully"
+          }
+      
+      - name: Prepare release files
+        id: prepare
+        run: |
+          $VERSION = "${{ steps.version.outputs.VERSION }}"
+          $RELEASE_NAME = "god_of_war_browser-$VERSION"
+          $RELEASE_DIR = "release-files"
+          
+          Write-Host "Creating release directory structure in: $RELEASE_DIR"
+          New-Item -ItemType Directory -Path "$RELEASE_DIR" -Force
+          Copy-Item -Path "god_of_war_browser.exe" -Destination "$RELEASE_DIR\"
+          Write-Host "Copied executable to release directory"
+          
+          if (Test-Path "web" -PathType Container) {
+            New-Item -ItemType Directory -Path "$RELEASE_DIR\web" -Force
+            $webFiles = Get-ChildItem -Path "web" -Recurse -File
+            if ($webFiles.Count -gt 0) {
+              Write-Host "Copying $($webFiles.Count) files from web folder to release directory"
+              Copy-Item -Path "web\*" -Destination "$RELEASE_DIR\web\" -Recurse -Force
+              $copiedFiles = Get-ChildItem -Path "$RELEASE_DIR\web" -Recurse -File | Measure-Object | Select-Object -ExpandProperty Count
+              Write-Host "Copied $copiedFiles files to release web directory"
+            } else {
+              Write-Host "Web folder is empty, created empty directory in release"
+            }
+          }
+          
+          $CONFIG_FILES = @(
+            "font_aliases.cfg",
+            "font_aliases.ru.cp1251.cfg"
+          )
+          
+          foreach ($FILE in $CONFIG_FILES) {
+            if (Test-Path $FILE) {
+              Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
+              Write-Host "Copied config file to release directory: $FILE"
+            }
+          }
+          
+          $OPTIONAL_FILES = @(
+            "LOCALIZATION.md",
+            "README.md",
+            "hashes.dump.txt",
+            "strings.dump.txt"
+          )
+          
+          foreach ($FILE in $OPTIONAL_FILES) {
+            if (Test-Path $FILE) {
+              Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
+              Write-Host "Copied optional file to release directory: $FILE"
+            }
+          }
+          
+          Write-Host "Files in release directory:"
+          Get-ChildItem -Path $RELEASE_DIR -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
+          
+          echo "RELEASE_DIR=$RELEASE_DIR" >> $env:GITHUB_OUTPUT
+          echo "RELEASE_NAME=$RELEASE_NAME" >> $env:GITHUB_OUTPUT
+          echo "ARCHIVE_NAME=$RELEASE_NAME.zip" >> $env:GITHUB_OUTPUT
+      
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.prepare.outputs.RELEASE_NAME }}
+          path: ${{ steps.prepare.outputs.RELEASE_DIR }}/**
+          retention-days: 30
+
+  tag-version:
+    name: Tag Version
+    if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      
+      - name: Generate Version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref }#refs/tags/}"
+          else
+            git fetch --tags
+            LATEST_TAG=$(git tag -l "v*" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+            
+            if [ -z "$LATEST_TAG" ]; then
+              echo "No standard version tags found. Starting with v0.0.1"
+              VERSION="v0.0.1"
+            else
+              echo "Last valid tag: $LATEST_TAG"
+              
+              # Split version into components
+              IFS='.' read -r -a components <<< "${LATEST_TAG#v}"
+              MAJOR="${components[0]}"
+              MINOR="${components[1]}"
+              PATCH="${components[2]}"
+              
+              # Increment patch version
+              PATCH=$((PATCH + 1))
+              if [ "$PATCH" -gt 9 ]; then
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              fi
+              if [ "$MINOR" -gt 9 ]; then
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+              fi
+              
+              VERSION="v$MAJOR.$MINOR.$PATCH"
+            fi
+          fi
+          
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+      
+      - name: Tag Version
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git tag ${{ steps.version.outputs.VERSION }}
+          git push origin ${{ steps.version.outputs.VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Create Release
+    if: success() && (startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && github.event_name != 'pull_request'))
+    needs: [build, tag-version]
+    runs-on: windows-latest
+    
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: god_of_war_browser-*
+          path: downloads
+          merge-multiple: true
+      
+      - name: List Downloaded Files
+        run: |
+          Get-ChildItem -Path downloads -Recurse | ForEach-Object { Write-Host $_.FullName }
+      
+      - name: Determine Version
+        id: version
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
+          } else {
+            # Find the latest release tag
+            $pattern = "god_of_war_browser-v*"
+            $folders = Get-ChildItem -Path downloads -Directory -Filter $pattern | Select-Object -ExpandProperty Name
+            if ($folders.Count -gt 0) {
+              # Extract version from folder name
+              $VERSION = $folders[0] -replace 'god_of_war_browser-', ''
+            } else {
+              # Default version if not found
               $VERSION = "v0.0.1"
             }
           }
-        }
-        
-        echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
-        echo "Generated version: $VERSION"
-    
-    - name: Verify required files
-      run: |
-        if (-Not (Test-Path "god_of_war_browser.exe")) {
-          Write-Error "Missing executable: god_of_war_browser.exe"
-          exit 1
-        } else {
-          Write-Host "Executable verified: god_of_war_browser.exe"
-        }
-        if (-Not (Test-Path "web" -PathType Container)) {
-          Write-Host "Web folder not found, creating it..."
-          New-Item -ItemType Directory -Path "web" -Force
-          Write-Host "Created empty web folder"
-        } else {
-          Write-Host "Web folder verified"
-          $webFiles = Get-ChildItem -Path "web" -Recurse | Measure-Object | Select-Object -ExpandProperty Count
-          Write-Host "Found $webFiles items in web folder"
-        }
-        $CONFIG_FILES = @(
-          "font_aliases.cfg",
-          "font_aliases.ru.cp1251.cfg"
-        )
-        
-        $MISSING_CONFIG = @()
-        
-        foreach ($FILE in $CONFIG_FILES) {
-          if (-Not (Test-Path $FILE)) {
-            $MISSING_CONFIG += $FILE
-          } else {
-            Write-Host ("Config file verified: " + $FILE)
-          }
-        }
-        
-        if ($MISSING_CONFIG.Count -gt 0) {
-          $missingFiles = $MISSING_CONFIG -join ', '
-          Write-Host ("Some config files are missing: " + $missingFiles)
-          Write-Host "Continuing anyway as these may not be critical"
-        } else {
-          Write-Host "All config files verified successfully"
-        }
-    
-    - name: Prepare release files
-      run: |
-        $VERSION = "${{ steps.version.outputs.VERSION }}"
-        $RELEASE_NAME = "god_of_war_browser-$VERSION"
-        $RELEASE_DIR = "release-files"
-        
-        Write-Host "Creating release directory structure in: $RELEASE_DIR"
-        New-Item -ItemType Directory -Path "$RELEASE_DIR" -Force
-        Copy-Item -Path "god_of_war_browser.exe" -Destination "$RELEASE_DIR\"
-        Write-Host "Copied executable to release directory"
-        
-        if (Test-Path "web" -PathType Container) {
-          New-Item -ItemType Directory -Path "$RELEASE_DIR\web" -Force
-          $webFiles = Get-ChildItem -Path "web" -Recurse -File
-          if ($webFiles.Count -gt 0) {
-            Write-Host "Copying $($webFiles.Count) files from web folder to release directory"
-            Copy-Item -Path "web\*" -Destination "$RELEASE_DIR\web\" -Recurse -Force
-            $copiedFiles = Get-ChildItem -Path "$RELEASE_DIR\web" -Recurse -File | Measure-Object | Select-Object -ExpandProperty Count
-            Write-Host "Copied $copiedFiles files to release web directory"
-          } else {
-            Write-Host "Web folder is empty, created empty directory in release"
-          }
-        }
-        
-        $CONFIG_FILES = @(
-          "font_aliases.cfg",
-          "font_aliases.ru.cp1251.cfg"
-        )
-        
-        foreach ($FILE in $CONFIG_FILES) {
-          if (Test-Path $FILE) {
-            Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
-            Write-Host "Copied config file to release directory: $FILE"
-          }
-        }
-        
-        $OPTIONAL_FILES = @(
-          "LOCALIZATION.md",
-          "README.md",
-          "hashes.dump.txt",
-          "strings.dump.txt"
-        )
-        
-        foreach ($FILE in $OPTIONAL_FILES) {
-          if (Test-Path $FILE) {
-            Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
-            Write-Host "Copied optional file to release directory: $FILE"
-          }
-        }
-        
-        Write-Host "Files in release directory:"
-        Get-ChildItem -Path $RELEASE_DIR -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
-        
-        echo "RELEASE_DIR=$RELEASE_DIR" >> $env:GITHUB_ENV
-        echo "RELEASE_NAME=$RELEASE_NAME" >> $env:GITHUB_ENV
-        echo "ARCHIVE_NAME=$RELEASE_NAME.zip" >> $env:GITHUB_ENV
-    
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.RELEASE_NAME }}
-        path: ${{ env.RELEASE_DIR }}/**
-        retention-days: 30
-    
-    - name: Tag Version
-      if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
-      run: |
-        git config --global user.name 'GitHub Actions'
-        git config --global user.email 'actions@github.com'
-        git tag ${{ steps.version.outputs.VERSION }}
-        git push origin ${{ steps.version.outputs.VERSION }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Create Release Archive
-      run: |
-        $RELEASE_DIR = "${{ env.RELEASE_DIR }}"
-        $ARCHIVE_NAME = "${{ env.ARCHIVE_NAME }}"
-        
-        Write-Host "Creating release archive: $ARCHIVE_NAME"
-        Compress-Archive -Path "$RELEASE_DIR\*" -DestinationPath $ARCHIVE_NAME -Force
-        
-        if (Test-Path $ARCHIVE_NAME) {
-          $archiveSize = (Get-Item $ARCHIVE_NAME).Length
-          $sizeMB = [math]::Round($archiveSize/1MB, 2)
-          Write-Host "Archive created successfully: $ARCHIVE_NAME ($sizeMB MB)"
-        } else {
-          Write-Error "Failed to create archive: $ARCHIVE_NAME"
-          exit 1
-        }
-    
-    - name: Create GitHub Release
-      if: success() && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ steps.version.outputs.VERSION }}
-        name: God of War Browser ${{ steps.version.outputs.VERSION }}
-        body: |
-          God of War Browser ${{ steps.version.outputs.VERSION }}
+          echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+          echo "RELEASE_NAME=god_of_war_browser-$VERSION" >> $env:GITHUB_OUTPUT
+          echo "ARCHIVE_NAME=god_of_war_browser-$VERSION.zip" >> $env:GITHUB_OUTPUT
+          echo "Using version: $VERSION"
+      
+      - name: Create Release Archive
+        run: |
+          $ARCHIVE_NAME = "${{ steps.version.outputs.ARCHIVE_NAME }}"
           
-          Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-          Build: ${{ github.run_number }}
-          Date: ${{ github.event.head_commit.timestamp }}
-        files: ${{ env.ARCHIVE_NAME }}
-        draft: false
-        prerelease: false
-        make_latest: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          Write-Host "Creating release archive: $ARCHIVE_NAME"
+          Compress-Archive -Path "downloads\*" -DestinationPath $ARCHIVE_NAME -Force
+          
+          if (Test-Path $ARCHIVE_NAME) {
+            $archiveSize = (Get-Item $ARCHIVE_NAME).Length
+            $sizeMB = [math]::Round($archiveSize/1MB, 2)
+            Write-Host "Archive created successfully: $ARCHIVE_NAME ($sizeMB MB)"
+          } else {
+            Write-Error "Failed to create archive: $ARCHIVE_NAME"
+            exit 1
+          }
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: God of War Browser ${{ steps.version.outputs.VERSION }}
+          body: |
+            God of War Browser ${{ steps.version.outputs.VERSION }}
+            
+            Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            Build: ${{ github.run_number }}
+            Date: ${{ github.event.head_commit.timestamp }}
+          files: ${{ steps.version.outputs.ARCHIVE_NAME }}
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
