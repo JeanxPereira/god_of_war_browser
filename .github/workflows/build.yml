@@ -55,36 +55,244 @@ jobs:
           # Use the tag as version
           $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
         } else {
-          # Check if there's a previous tag/version
+          # Fetch all tags
           git fetch --tags
-          $LAST_TAG = $(git tag -l "v*" | Sort-Object -Property {[version]::new($_.TrimStart("v").PadRight(8,'0'))} -Descending | Select-Object -First 1)
           
-          # If no previous tag exists, start with v0.0.1
-          if ([string]::IsNullOrEmpty($LAST_TAG)) {
-            $VERSION="v0.0.1"
+          # Get all semver tags (v0.0.1 format) and filter out non-standard formats
+          $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+
+    
+    - name: Verify required files
+      run: |
+        # Verify the executable was built
+        if (-Not (Test-Path "god_of_war_browser.exe")) {
+          Write-Error "Missing executable: god_of_war_browser.exe"
+          exit 1
+        } else {
+          Write-Host "✅ Executable verified: god_of_war_browser.exe"
+        }
+        
+        # Verify web folder exists (create if needed)
+        if (-Not (Test-Path "web" -PathType Container)) {
+          Write-Host "Web folder not found, creating it..."
+          New-Item -ItemType Directory -Path "web" -Force
+          Write-Host "⚠️ Created empty web folder"
+        } else {
+          Write-Host "✅ Web folder verified"
+        }
+        
+        # Check for config files (not critical, can continue without them)
+        $CONFIG_FILES = @(
+          "font_aliases.cfg",
+          "font_aliases.ru.cp1251.cfg"
+        )
+        
+        $MISSING_CONFIG = @()
+        
+        foreach ($FILE in $CONFIG_FILES) {
+          if (-Not (Test-Path $FILE)) {
+            $MISSING_CONFIG += $FILE
           } else {
-            # Extract version components
-            $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
-            $MAJOR = [int]$COMPONENTS[0]
-            $MINOR = [int]$COMPONENTS[1]
-            $PATCH = [int]$COMPONENTS[2]
+            Write-Host "✅ Config file verified: $FILE"
+          }
+        }
+        
+        if ($MISSING_CONFIG.Count -gt 0) {
+          Write-Host "⚠️ Some config files are missing: $($MISSING_CONFIG -join ', ')"
+          Write-Host "Continuing anyway as these may not be critical"
+        } else {
+          Write-Host "All config files verified successfully"
+        }
+    
+    - name: Create Archive
+      run: |
+        $VERSION="${{ steps.version.outputs.VERSION }}"
+        
+        # Create zip file with requested format
+        $FILENAME="god_of_war_browser-$VERSION.zip"
+        Write-Host "Creating archive: $FILENAME"
+        
+        # Add main executable (required)
+        7z a "$FILENAME" god_of_war_browser.exe
+        Write-Host "Added executable to archive"
+        
+        # Add web folder (always include, even if empty)
+        if (Test-Path "web" -PathType Container) {
+          # Count files in web folder
+          $webFileCount = (Get-ChildItem -Path "web" -Recurse -File).Count
+          if ($webFileCount -gt 0) {
+            Write-Host "Adding $webFileCount files from web folder to archive"
+            7z a "$FILENAME" -r web -x!*.go
+          } else {
+            Write-Host "Web folder is empty, adding empty directory"
+            # Create empty directory in zip
+            New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
+            7z a "$FILENAME" web-temp
+            7z rn "$FILENAME" web-temp web
+            Remove-Item -Path "web-temp" -Force
+          }
+        } else {
+          Write-Host "Web folder not found, creating empty directory in archive"
+          New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
+          7z a "$FILENAME" web-temp
+          7z rn "$FILENAME" web-temp web
+          Remove-Item -Path "web-temp" -Force
+        }
+        
+        # Add config files (if they exist)
+        $CONFIG_FILES = @(
+          "font_aliases.cfg",
+          "font_aliases.ru.cp1251.cfg"
+        )
+        
+        foreach ($FILE in $CONFIG_FILES) {
+          if (Test-Path $FILE) {
+            7z a "$FILENAME" $FILE
+            Write-Host "Added config file to archive: $FILE"
+          } else {
+            Write-Host "Config file not found, skipping: $FILE"
+          }
+        }
+        
+        # Add optional files if they exist
+        $OPTIONAL_FILES = @(
+          "LOCALIZATION.md",
+          "README.md",
+          "hashes.dump.txt",
+          "strings.dump.txt"
+        )
+        
+        foreach ($FILE in $OPTIONAL_FILES) {
+          if (Test-Path $FILE) {
+            7z a "$FILENAME" $FILE
+            Write-Host "Added optional file to archive: $FILE"
+          }
+        }
+        
+        # Verify archive was created successfully
+        if (Test-Path $FILENAME) {
+          $archiveSize = (Get-Item $FILENAME).Length
+          Write-Host "Archive created successfully: $FILENAME ($([math]::Round($archiveSize/1MB, 2)) MB)"
+        } else {
+          Write-Error "Failed to create archive: $FILENAME"
+          exit 1
+        }
+        
+        echo "ARCHIVE_PATH=$FILENAME" >> $env:GITHUB_ENV
+    
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
+        path: ${{ env.ARCHIVE_PATH }}
+        retention-days: 30
+    
+    - name: Tag Version
+      if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
+      run: |
+        # Configure git for creating a new tag
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git tag ${{ steps.version.outputs.VERSION }}
+        git push origin ${{ steps.version.outputs.VERSION }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: success()
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: God of War Browser ${{ steps.version.outputs.VERSION }}
+        body: |
+          God of War Browser ${{ steps.version.outputs.VERSION }}
+          
+          Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          Build: ${{ github.run_number }}
+          Date: ${{ github.event.head_commit.timestamp }}
+        files: ${{ env.ARCHIVE_PATH }}
+        draft: false
+        prerelease: false
+        make_latest: true  # Marca cada nova release como "latest"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Notify Success on Discord
+      if: success()
+      run: |
+        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
+        ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
+    
+    - name: Notify Failure on Discord
+      if: failure()
+      run: |
+        Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
+        ./send.ps1 failure ${{ secrets.WEBHOOK_URL }}
+ }
+          
+          # Get last valid tag or use v0.0.0 if none exists
+          if ($TAGS.Count -eq 0) {
+            Write-Host "No standard version tags found. Starting with v0.0.1"
+            $VERSION = "v0.0.1"
+          } else {
+            # Sort tags safely by extracting numeric components
+            $SORTED_TAGS = $TAGS | ForEach-Object {
+              $TAG = $_
+              $COMPONENTS = $TAG.TrimStart("v").Split(".")
+              
+              # Ensure we have 3 components
+              if ($COMPONENTS.Count -ge 3) {
+                # Try to parse as integers
+                try {
+                  $MAJOR = [int]$COMPONENTS[0]
+                  $MINOR = [int]$COMPONENTS[1] 
+                  $PATCH = [int]$COMPONENTS[2]
+                  
+                  # Create custom object for sorting
+                  [PSCustomObject]@{
+                    Tag = $TAG
+                    SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
+                  }
+                } catch {
+                  Write-Host "Skipping tag $TAG: $_"
+                  $null # Return null for filtering
+                }
+              } else {
+                Write-Host "Skipping tag $TAG: Doesn't have 3 components"
+                $null # Return null for filtering
+              }
+            } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
             
-            # Increment PATCH
-            $PATCH++
-            
-            # If PATCH > 9, increment MINOR and reset PATCH
-            if ($PATCH -gt 9) {
-              $MINOR++
-              $PATCH = 0
+            # Get the highest version tag
+            if ($SORTED_TAGS.Count -gt 0) {
+              $LAST_TAG = $SORTED_TAGS[0].Tag
+              Write-Host "Last valid tag: $LAST_TAG"
+              
+              # Extract version components
+              $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
+              $MAJOR = [int]$COMPONENTS[0]
+              $MINOR = [int]$COMPONENTS[1]
+              $PATCH = [int]$COMPONENTS[2]
+              
+              # Increment PATCH
+              $PATCH++
+              
+              # If PATCH > 9, increment MINOR and reset PATCH
+              if ($PATCH -gt 9) {
+                $MINOR++
+                $PATCH = 0
+              }
+              
+              # If MINOR > 9, increment MAJOR and reset MINOR
+              if ($MINOR -gt 9) {
+                $MAJOR++
+                $MINOR = 0
+              }
+              
+              $VERSION = "v$MAJOR.$MINOR.$PATCH"
+            } else {
+              Write-Host "No valid tags found after filtering. Starting with v0.0.1"
+              $VERSION = "v0.0.1"
             }
-            
-            # If MINOR > 9, increment MAJOR and reset MINOR
-            if ($MINOR -gt 9) {
-              $MAJOR++
-              $MINOR = 0
-            }
-            
-            $VERSION = "v$MAJOR.$MINOR.$PATCH"
           }
         }
         
