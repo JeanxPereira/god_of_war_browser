@@ -43,12 +43,12 @@ jobs:
     - name: Generate Version
       id: version
       run: |
-        # Usar formato similar ao AppVeyor para compatibilidade
+        # Usar formato de versão v0.0.x
         if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -match "^v") {
           $VERSION="${{ github.ref_name }}"
         } else {
-          # Formato: 1.master.{buildNumber} como visto no log
-          $VERSION="1.master.${{ github.run_number }}"
+          # Formato: v0.0.{buildNumber}
+          $VERSION="v0.0.${{ github.run_number }}"
         }
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
         echo "Version: $VERSION"
@@ -57,29 +57,30 @@ jobs:
       run: |
         $VERSION="${{ steps.version.outputs.VERSION }}"
         
+        # Criar arquivo zip com o formato solicitado: god_of_war_browser-[v0.0.0].zip
+        $FILENAME="god_of_war_browser-$VERSION.zip"
+        
         # Criar arquivo zip inicial com o diretório web
         # Verificar se o diretório web existe no diretório do projeto
         if (Test-Path "web") {
-          7z a god_of_war_browser.zip -r web -x!*.go
+          7z a "$FILENAME" -r web -x!*.go
         } elseif (Test-Path "c:\gopath\src\github.com\mogaika\god_of_war_browser\web") {
-          7z a god_of_war_browser.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
+          7z a "$FILENAME" -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
         } else {
           Write-Error "Diretório web não encontrado"
           exit 1
         }
         
         # Adicionar os outros arquivos ao zip
-        7z a god_of_war_browser.zip god_of_war_browser.exe
-        7z a god_of_war_browser.zip font_aliases.cfg
-        7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
-        7z a god_of_war_browser.zip LOCALIZATION.md
-        7z a god_of_war_browser.zip README.md
-        7z a god_of_war_browser.zip hashes.dump.txt
-        7z a god_of_war_browser.zip strings.dump.txt
+        7z a "$FILENAME" god_of_war_browser.exe
+        7z a "$FILENAME" font_aliases.cfg
+        7z a "$FILENAME" font_aliases.ru.cp1251.cfg
+        7z a "$FILENAME" LOCALIZATION.md
+        7z a "$FILENAME" README.md
+        7z a "$FILENAME" hashes.dump.txt
+        7z a "$FILENAME" strings.dump.txt
         
-        # Renomear para o formato esperado (god_of_war_browser.1.master.245.zip)
-        Rename-Item god_of_war_browser.zip god_of_war_browser.$VERSION.zip
-        echo "ARCHIVE_PATH=god_of_war_browser.$VERSION.zip" >> $env:GITHUB_ENV
+        echo "ARCHIVE_PATH=$FILENAME" >> $env:GITHUB_ENV
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
