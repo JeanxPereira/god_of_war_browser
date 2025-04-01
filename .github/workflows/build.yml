@@ -73,11 +73,11 @@ jobs:
                   }
                 } catch {
                   Write-Host ("Skipping tag " + $TAG + ": " + $_.Exception.Message)
-                  $null # Return null for filtering
+                  $null
                 }
               } else {
                 Write-Host ("Skipping tag " + $TAG + ": Doesn't have 3 components")
-                $null # Return null for filtering
+                $null
               }
             } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
             if ($SORTED_TAGS.Count -gt 0) {
@@ -148,15 +148,17 @@ jobs:
           Write-Host "All config files verified successfully"
         }
     
-    - name: Prepare working directory for archive
+    - name: Prepare release files
       run: |
         $VERSION = "${{ steps.version.outputs.VERSION }}"
-        $RELEASE_DIR = "release-package"
+        $RELEASE_NAME = "god_of_war_browser-$VERSION"
+        $RELEASE_DIR = $RELEASE_NAME
         
         Write-Host "Creating release directory structure in: $RELEASE_DIR"
         New-Item -ItemType Directory -Path "$RELEASE_DIR" -Force
         Copy-Item -Path "god_of_war_browser.exe" -Destination "$RELEASE_DIR\"
         Write-Host "Copied executable to release directory"
+        
         if (Test-Path "web" -PathType Container) {
           New-Item -ItemType Directory -Path "$RELEASE_DIR\web" -Force
           $webFiles = Get-ChildItem -Path "web" -Recurse -File
@@ -169,6 +171,7 @@ jobs:
             Write-Host "Web folder is empty, created empty directory in release"
           }
         }
+        
         $CONFIG_FILES = @(
           "font_aliases.cfg",
           "font_aliases.ru.cp1251.cfg"
@@ -180,6 +183,7 @@ jobs:
             Write-Host "Copied config file to release directory: $FILE"
           }
         }
+        
         $OPTIONAL_FILES = @(
           "LOCALIZATION.md",
           "README.md",
@@ -193,36 +197,41 @@ jobs:
             Write-Host "Copied optional file to release directory: $FILE"
           }
         }
+        
         Write-Host "Files in release directory:"
         Get-ChildItem -Path $RELEASE_DIR -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
+        
         echo "RELEASE_DIR=$RELEASE_DIR" >> $env:GITHUB_ENV
+        echo "RELEASE_NAME=$RELEASE_NAME" >> $env:GITHUB_ENV
     
     - name: Create Archive
       run: |
         $VERSION = "${{ steps.version.outputs.VERSION }}"
         $RELEASE_DIR = "${{ env.RELEASE_DIR }}"
-        $FILENAME = "god_of_war_browser-$VERSION.zip"
-        Write-Host ("Creating archive: " + $FILENAME)
-        Set-Location -Path $RELEASE_DIR
-        7z a "../$FILENAME" *
-        Set-Location -Path ..
-        if (Test-Path $FILENAME) {
-          $archiveSize = (Get-Item $FILENAME).Length
+        $RELEASE_NAME = "${{ env.RELEASE_NAME }}"
+        $ARCHIVE_PATH = "$RELEASE_NAME.zip"
+        
+        Write-Host "Creating archive: $ARCHIVE_PATH"
+        Compress-Archive -Path "$RELEASE_DIR\*" -DestinationPath $ARCHIVE_PATH -Force
+        
+        if (Test-Path $ARCHIVE_PATH) {
+          $archiveSize = (Get-Item $ARCHIVE_PATH).Length
           $sizeMB = [math]::Round($archiveSize/1MB, 2)
-          Write-Host ("Archive created successfully: " + $FILENAME + " (" + $sizeMB + " MB)")
+          Write-Host "Archive created successfully: $ARCHIVE_PATH ($sizeMB MB)"
           Write-Host "Archive contents:"
-          7z l $FILENAME
+          Expand-Archive -Path $ARCHIVE_PATH -DestinationPath "${ARCHIVE_PATH}_test" -Force
+          Get-ChildItem -Path "${ARCHIVE_PATH}_test" -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
         } else {
-          Write-Error "Failed to create archive: $FILENAME"
+          Write-Error "Failed to create archive: $ARCHIVE_PATH"
           exit 1
         }
         
-        echo "ARCHIVE_PATH=$FILENAME" >> $env:GITHUB_ENV
+        echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> $env:GITHUB_ENV
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
+        name: ${{ env.RELEASE_NAME }}
         path: ${{ env.ARCHIVE_PATH }}
         retention-days: 30
     
@@ -237,8 +246,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Create GitHub Release
+      if: success() && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
       uses: softprops/action-gh-release@v2
-      if: success()
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
         name: God of War Browser ${{ steps.version.outputs.VERSION }}
