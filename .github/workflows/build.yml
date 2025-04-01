@@ -1,28 +1,30 @@
 name: Build and Deploy
-
 on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 jobs:
   build:
     runs-on: windows-latest
-
     env:
       GOPATH: C:\gopath
       GOARCH: 386
       GOOS: windows
-
+    
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
-
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.20'
-
+    
     - name: Set up environment
       run: |
         echo $env:PATH
@@ -30,46 +32,69 @@ jobs:
         $env:PATH = "$env:GOPATH\bin;C:\go\bin;$env:PATH"
         go version
         go env
-
+    
     - name: Run Tests
       run: go test -v ./...
-
+    
     - name: Build Project
       run: go build
-
+    
+    - name: Generate Version
+      id: version
+      run: |
+        # Use tag if available, otherwise use commit SHA and build number
+        if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -match "^v") {
+          $VERSION="${{ github.ref_name }}"
+        } else {
+          $GIT_SHORT_SHA=$("${{ github.sha }}".Substring(0, 7))
+          $VERSION="v0.0.${{ github.run_number }}-$GIT_SHORT_SHA"
+        }
+        echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
     - name: Create Archive
       run: |
-        7z a god_of_war_browser.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
-        7z a god_of_war_browser.zip god_of_war_browser.exe
-        7z a god_of_war_browser.zip font_aliases.cfg
-        7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
-        7z a god_of_war_browser.zip LOCALIZATION.md
-        7z a god_of_war_browser.zip README.md
-        7z a god_of_war_browser.zip hashes.dump.txt
-        7z a god_of_war_browser.zip strings.dump.txt
-        mv god_of_war_browser.zip god_of_war_browser.${{ github.run_number }}.zip
-
+        $VERSION="${{ steps.version.outputs.VERSION }}"
+        7z a god_of_war_browser-$VERSION.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
+        7z a god_of_war_browser-$VERSION.zip god_of_war_browser.exe
+        7z a god_of_war_browser-$VERSION.zip font_aliases.cfg
+        7z a god_of_war_browser-$VERSION.zip font_aliases.ru.cp1251.cfg
+        7z a god_of_war_browser-$VERSION.zip LOCALIZATION.md
+        7z a god_of_war_browser-$VERSION.zip README.md
+        7z a god_of_war_browser-$VERSION.zip hashes.dump.txt
+        7z a god_of_war_browser-$VERSION.zip strings.dump.txt
+        echo "ARCHIVE_PATH=god_of_war_browser-$VERSION.zip" >> $env:GITHUB_ENV
+    
     - name: Upload Artifact
       uses: actions/upload-artifact@v3
       with:
-        name: archive
-        path: god_of_war_browser.${{ github.run_number }}.zip
-
+        name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
+        path: ${{ env.ARCHIVE_PATH }}
+    
     - name: Create GitHub Release
-      uses: ncipollo/release-action@v1
+      uses: softprops/action-gh-release@v1
+      if: success()
       with:
-        tag: ${{ github.run_number }}
-        name: god_of_war_browser.${{ github.run_number }}
-        body: Automatic release ${{ github.run_number }}
-        files: god_of_war_browser.${{ github.run_number }}.zip
-        token: ${{ secrets.GITHUB_TOKEN }}
-
+        tag_name: ${{ steps.version.outputs.VERSION }}
+        name: God of War Browser ${{ steps.version.outputs.VERSION }}
+        body: |
+          God of War Browser ${{ steps.version.outputs.VERSION }}
+          
+          Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          Build: ${{ github.run_number }}
+          Date: ${{ github.event.head_commit.timestamp }}
+        files: ${{ env.ARCHIVE_PATH }}
+        draft: false
+        prerelease: ${{ github.ref_type != 'tag' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Notify Success on Discord
       if: success()
       run: |
         Invoke-RestMethod https://raw.githubusercontent.com/DiscordHooks/appveyor-discord-webhook/master/send.ps1 -OutFile send.ps1
         ./send.ps1 success ${{ secrets.WEBHOOK_URL }}
-
+    
     - name: Notify Failure on Discord
       if: failure()
       run: |
