@@ -50,42 +50,28 @@ jobs:
     - name: Generate Version
       id: version
       run: |
-        # Check if workflow was triggered by a tag
         if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
-          # Use the tag as version
           $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
         } else {
-          # Fetch all tags
           git fetch --tags
-          
-          # Get all semver tags (v0.0.1 format) and filter out non-standard formats
           $TAGS = git tag -l "v*" | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
-          
-          # Get last valid tag or use v0.0.0 if none exists
           if ($TAGS.Count -eq 0) {
             Write-Host "No standard version tags found. Starting with v0.0.1"
             $VERSION = "v0.0.1"
           } else {
-            # Sort tags safely by extracting numeric components
             $SORTED_TAGS = $TAGS | ForEach-Object {
               $TAG = $_
               $COMPONENTS = $TAG.TrimStart("v").Split(".")
-              
-              # Ensure we have 3 components
               if ($COMPONENTS.Count -ge 3) {
-                # Try to parse as integers
                 try {
                   $MAJOR = [int]$COMPONENTS[0]
                   $MINOR = [int]$COMPONENTS[1] 
                   $PATCH = [int]$COMPONENTS[2]
-                  
-                  # Create custom object for sorting
                   [PSCustomObject]@{
                     Tag = $TAG
                     SortValue = $MAJOR * 10000 + $MINOR * 100 + $PATCH
                   }
                 } catch {
-                  # Corrigi o problema com $_ escapando corretamente
                   Write-Host ("Skipping tag " + $TAG + ": " + $_.Exception.Message)
                   $null # Return null for filtering
                 }
@@ -94,28 +80,18 @@ jobs:
                 $null # Return null for filtering
               }
             } | Where-Object { $_ -ne $null } | Sort-Object -Property SortValue -Descending
-            
-            # Get the highest version tag
             if ($SORTED_TAGS.Count -gt 0) {
               $LAST_TAG = $SORTED_TAGS[0].Tag
               Write-Host "Last valid tag: $LAST_TAG"
-              
-              # Extract version components
               $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
               $MAJOR = [int]$COMPONENTS[0]
               $MINOR = [int]$COMPONENTS[1]
               $PATCH = [int]$COMPONENTS[2]
-              
-              # Increment PATCH
               $PATCH++
-              
-              # If PATCH > 9, increment MINOR and reset PATCH
               if ($PATCH -gt 9) {
                 $MINOR++
                 $PATCH = 0
               }
-              
-              # If MINOR > 9, increment MAJOR and reset MINOR
               if ($MINOR -gt 9) {
                 $MAJOR++
                 $MINOR = 0
@@ -134,27 +110,21 @@ jobs:
     
     - name: Verify required files
       run: |
-        # Verify the executable was built
         if (-Not (Test-Path "god_of_war_browser.exe")) {
           Write-Error "Missing executable: god_of_war_browser.exe"
           exit 1
         } else {
           Write-Host "Executable verified: god_of_war_browser.exe"
         }
-        
-        # Verify web folder exists (create if needed)
         if (-Not (Test-Path "web" -PathType Container)) {
           Write-Host "Web folder not found, creating it..."
           New-Item -ItemType Directory -Path "web" -Force
           Write-Host "Created empty web folder"
         } else {
           Write-Host "Web folder verified"
-          # List files in web folder for debugging
           $webFiles = Get-ChildItem -Path "web" -Recurse | Measure-Object | Select-Object -ExpandProperty Count
           Write-Host "Found $webFiles items in web folder"
         }
-        
-        # Check for config files (not critical, can continue without them)
         $CONFIG_FILES = @(
           "font_aliases.cfg",
           "font_aliases.ru.cp1251.cfg"
@@ -180,37 +150,25 @@ jobs:
     
     - name: Prepare working directory for archive
       run: |
-        # Create a dedicated folder for the release package
         $VERSION = "${{ steps.version.outputs.VERSION }}"
         $RELEASE_DIR = "release-package"
         
         Write-Host "Creating release directory structure in: $RELEASE_DIR"
         New-Item -ItemType Directory -Path "$RELEASE_DIR" -Force
-        
-        # Copy executable
         Copy-Item -Path "god_of_war_browser.exe" -Destination "$RELEASE_DIR\"
         Write-Host "Copied executable to release directory"
-        
-        # Copy web folder
         if (Test-Path "web" -PathType Container) {
-          # Create web directory in release folder
           New-Item -ItemType Directory -Path "$RELEASE_DIR\web" -Force
-          
-          # Check if there are files to copy
           $webFiles = Get-ChildItem -Path "web" -Recurse -File
           if ($webFiles.Count -gt 0) {
             Write-Host "Copying $($webFiles.Count) files from web folder to release directory"
             Copy-Item -Path "web\*" -Destination "$RELEASE_DIR\web\" -Recurse -Force
-            
-            # Double check files were copied
             $copiedFiles = Get-ChildItem -Path "$RELEASE_DIR\web" -Recurse -File | Measure-Object | Select-Object -ExpandProperty Count
             Write-Host "Copied $copiedFiles files to release web directory"
           } else {
             Write-Host "Web folder is empty, created empty directory in release"
           }
         }
-        
-        # Copy config files
         $CONFIG_FILES = @(
           "font_aliases.cfg",
           "font_aliases.ru.cp1251.cfg"
@@ -222,8 +180,6 @@ jobs:
             Write-Host "Copied config file to release directory: $FILE"
           }
         }
-        
-        # Copy optional files
         $OPTIONAL_FILES = @(
           "LOCALIZATION.md",
           "README.md",
@@ -237,36 +193,24 @@ jobs:
             Write-Host "Copied optional file to release directory: $FILE"
           }
         }
-        
-        # List all files in the release directory for verification
         Write-Host "Files in release directory:"
         Get-ChildItem -Path $RELEASE_DIR -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
-        
-        # Return the release directory path
         echo "RELEASE_DIR=$RELEASE_DIR" >> $env:GITHUB_ENV
     
     - name: Create Archive
       run: |
         $VERSION = "${{ steps.version.outputs.VERSION }}"
         $RELEASE_DIR = "${{ env.RELEASE_DIR }}"
-        
-        # Create zip file with requested format
         $FILENAME = "god_of_war_browser-$VERSION.zip"
         Write-Host ("Creating archive: " + $FILENAME)
-        
-        # Create the zip file from the release directory
-        # Use 7z with absolute paths to ensure everything is included
-        $absolutePath = (Get-Location).Path + "\$RELEASE_DIR\*"
-        7z a $FILENAME "$absolutePath"
-        
-        # Verify archive was created successfully
+        Set-Location -Path $RELEASE_DIR
+        7z a "../$FILENAME" *
+        Set-Location -Path ..
         if (Test-Path $FILENAME) {
           $archiveSize = (Get-Item $FILENAME).Length
           $sizeMB = [math]::Round($archiveSize/1MB, 2)
           Write-Host ("Archive created successfully: " + $FILENAME + " (" + $sizeMB + " MB)")
-          
-          # Verify contents of the archive (list files in archive)
-          Write-Host "Verifying archive contents:"
+          Write-Host "Archive contents:"
           7z l $FILENAME
         } else {
           Write-Error "Failed to create archive: $FILENAME"
@@ -285,7 +229,6 @@ jobs:
     - name: Tag Version
       if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
       run: |
-        # Configure git for creating a new tag
         git config --global user.name 'GitHub Actions'
         git config --global user.email 'actions@github.com'
         git tag ${{ steps.version.outputs.VERSION }}
