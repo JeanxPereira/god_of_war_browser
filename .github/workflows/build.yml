@@ -13,6 +13,7 @@ jobs:
       GOPATH: C:\gopath
       GOARCH: 386
       GOOS: windows
+      CGO_ENABLED: 0
     
     steps:
     - name: Checkout code
@@ -42,12 +43,12 @@ jobs:
     - name: Generate Version
       id: version
       run: |
-        # Use tag if available, otherwise use commit SHA and build number
+        # Usar formato similar ao AppVeyor para compatibilidade
         if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -match "^v") {
           $VERSION="${{ github.ref_name }}"
         } else {
-          $GIT_SHORT_SHA=$("${{ github.sha }}".Substring(0, 7))
-          $VERSION="v0.0.${{ github.run_number }}-$GIT_SHORT_SHA"
+          # Formato: 1.master.{buildNumber} como visto no log
+          $VERSION="1.master.${{ github.run_number }}"
         }
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
         echo "Version: $VERSION"
@@ -55,15 +56,30 @@ jobs:
     - name: Create Archive
       run: |
         $VERSION="${{ steps.version.outputs.VERSION }}"
-        7z a god_of_war_browser-$VERSION.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
-        7z a god_of_war_browser-$VERSION.zip god_of_war_browser.exe
-        7z a god_of_war_browser-$VERSION.zip font_aliases.cfg
-        7z a god_of_war_browser-$VERSION.zip font_aliases.ru.cp1251.cfg
-        7z a god_of_war_browser-$VERSION.zip LOCALIZATION.md
-        7z a god_of_war_browser-$VERSION.zip README.md
-        7z a god_of_war_browser-$VERSION.zip hashes.dump.txt
-        7z a god_of_war_browser-$VERSION.zip strings.dump.txt
-        echo "ARCHIVE_PATH=god_of_war_browser-$VERSION.zip" >> $env:GITHUB_ENV
+        
+        # Criar arquivo zip inicial com o diretório web
+        # Verificar se o diretório web existe no diretório do projeto
+        if (Test-Path "web") {
+          7z a god_of_war_browser.zip -r web -x!*.go
+        } elseif (Test-Path "c:\gopath\src\github.com\mogaika\god_of_war_browser\web") {
+          7z a god_of_war_browser.zip -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
+        } else {
+          Write-Error "Diretório web não encontrado"
+          exit 1
+        }
+        
+        # Adicionar os outros arquivos ao zip
+        7z a god_of_war_browser.zip god_of_war_browser.exe
+        7z a god_of_war_browser.zip font_aliases.cfg
+        7z a god_of_war_browser.zip font_aliases.ru.cp1251.cfg
+        7z a god_of_war_browser.zip LOCALIZATION.md
+        7z a god_of_war_browser.zip README.md
+        7z a god_of_war_browser.zip hashes.dump.txt
+        7z a god_of_war_browser.zip strings.dump.txt
+        
+        # Renomear para o formato esperado (god_of_war_browser.1.master.245.zip)
+        Rename-Item god_of_war_browser.zip god_of_war_browser.$VERSION.zip
+        echo "ARCHIVE_PATH=god_of_war_browser.$VERSION.zip" >> $env:GITHUB_ENV
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -85,7 +101,7 @@ jobs:
           Date: ${{ github.event.head_commit.timestamp }}
         files: ${{ env.ARCHIVE_PATH }}
         draft: false
-        prerelease: ${{ github.ref_type != 'tag' }}
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
