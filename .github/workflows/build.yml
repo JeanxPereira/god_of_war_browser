@@ -139,7 +139,7 @@ jobs:
           Write-Error "Missing executable: god_of_war_browser.exe"
           exit 1
         } else {
-          Write-Host "✅ Executable verified: god_of_war_browser.exe"
+          Write-Host "Executable verified: god_of_war_browser.exe"
         }
         
         # Verify web folder exists (create if needed)
@@ -148,7 +148,10 @@ jobs:
           New-Item -ItemType Directory -Path "web" -Force
           Write-Host "Created empty web folder"
         } else {
-          Write-Host "✅ Web folder verified"
+          Write-Host "Web folder verified"
+          # List files in web folder for debugging
+          $webFiles = Get-ChildItem -Path "web" -Recurse | Measure-Object | Select-Object -ExpandProperty Count
+          Write-Host "Found $webFiles items in web folder"
         }
         
         # Check for config files (not critical, can continue without them)
@@ -163,7 +166,7 @@ jobs:
           if (-Not (Test-Path $FILE)) {
             $MISSING_CONFIG += $FILE
           } else {
-            Write-Host ("✅ Config file verified: " + $FILE)
+            Write-Host ("Config file verified: " + $FILE)
           }
         }
         
@@ -175,42 +178,39 @@ jobs:
           Write-Host "All config files verified successfully"
         }
     
-    - name: Create Archive
+    - name: Prepare working directory for archive
       run: |
+        # Create a dedicated folder for the release package
         $VERSION = "${{ steps.version.outputs.VERSION }}"
+        $RELEASE_DIR = "release-package"
         
-        # Create zip file with requested format
-        $FILENAME = "god_of_war_browser-$VERSION.zip"
-        Write-Host ("Creating archive: " + $FILENAME)
+        Write-Host "Creating release directory structure in: $RELEASE_DIR"
+        New-Item -ItemType Directory -Path "$RELEASE_DIR" -Force
         
-        # Add main executable (required)
-        7z a $FILENAME god_of_war_browser.exe
-        Write-Host "Added executable to archive"
+        # Copy executable
+        Copy-Item -Path "god_of_war_browser.exe" -Destination "$RELEASE_DIR\"
+        Write-Host "Copied executable to release directory"
         
-        # Add web folder (always include, even if empty)
+        # Copy web folder
         if (Test-Path "web" -PathType Container) {
-          # Count files in web folder
-          $webFileCount = (Get-ChildItem -Path "web" -Recurse -File).Count
-          if ($webFileCount -gt 0) {
-            Write-Host ("Adding " + $webFileCount + " files from web folder to archive")
-            7z a $FILENAME -r web -x!*.go
+          # Create web directory in release folder
+          New-Item -ItemType Directory -Path "$RELEASE_DIR\web" -Force
+          
+          # Check if there are files to copy
+          $webFiles = Get-ChildItem -Path "web" -Recurse -File
+          if ($webFiles.Count -gt 0) {
+            Write-Host "Copying $($webFiles.Count) files from web folder to release directory"
+            Copy-Item -Path "web\*" -Destination "$RELEASE_DIR\web\" -Recurse -Force
+            
+            # Double check files were copied
+            $copiedFiles = Get-ChildItem -Path "$RELEASE_DIR\web" -Recurse -File | Measure-Object | Select-Object -ExpandProperty Count
+            Write-Host "Copied $copiedFiles files to release web directory"
           } else {
-            Write-Host "Web folder is empty, adding empty directory"
-            # Create empty directory in zip
-            New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
-            7z a $FILENAME web-temp
-            7z rn $FILENAME web-temp web
-            Remove-Item -Path "web-temp" -Force
+            Write-Host "Web folder is empty, created empty directory in release"
           }
-        } else {
-          Write-Host "Web folder not found, creating empty directory in archive"
-          New-Item -ItemType Directory -Path "web-temp" -Force | Out-Null
-          7z a $FILENAME web-temp
-          7z rn $FILENAME web-temp web
-          Remove-Item -Path "web-temp" -Force
         }
         
-        # Add config files (if they exist)
+        # Copy config files
         $CONFIG_FILES = @(
           "font_aliases.cfg",
           "font_aliases.ru.cp1251.cfg"
@@ -218,14 +218,12 @@ jobs:
         
         foreach ($FILE in $CONFIG_FILES) {
           if (Test-Path $FILE) {
-            7z a $FILENAME $FILE
-            Write-Host ("Added config file to archive: " + $FILE)
-          } else {
-            Write-Host ("Config file not found, skipping: " + $FILE)
+            Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
+            Write-Host "Copied config file to release directory: $FILE"
           }
         }
         
-        # Add optional files if they exist
+        # Copy optional files
         $OPTIONAL_FILES = @(
           "LOCALIZATION.md",
           "README.md",
@@ -235,16 +233,41 @@ jobs:
         
         foreach ($FILE in $OPTIONAL_FILES) {
           if (Test-Path $FILE) {
-            7z a $FILENAME $FILE
-            Write-Host ("Added optional file to archive: " + $FILE)
+            Copy-Item -Path $FILE -Destination "$RELEASE_DIR\"
+            Write-Host "Copied optional file to release directory: $FILE"
           }
         }
+        
+        # List all files in the release directory for verification
+        Write-Host "Files in release directory:"
+        Get-ChildItem -Path $RELEASE_DIR -Recurse | ForEach-Object { Write-Host $_.FullName.Replace((Get-Location).Path + "\", "") }
+        
+        # Return the release directory path
+        echo "RELEASE_DIR=$RELEASE_DIR" >> $env:GITHUB_ENV
+    
+    - name: Create Archive
+      run: |
+        $VERSION = "${{ steps.version.outputs.VERSION }}"
+        $RELEASE_DIR = "${{ env.RELEASE_DIR }}"
+        
+        # Create zip file with requested format
+        $FILENAME = "god_of_war_browser-$VERSION.zip"
+        Write-Host ("Creating archive: " + $FILENAME)
+        
+        # Create the zip file from the release directory
+        # Use 7z with absolute paths to ensure everything is included
+        $absolutePath = (Get-Location).Path + "\$RELEASE_DIR\*"
+        7z a $FILENAME "$absolutePath"
         
         # Verify archive was created successfully
         if (Test-Path $FILENAME) {
           $archiveSize = (Get-Item $FILENAME).Length
           $sizeMB = [math]::Round($archiveSize/1MB, 2)
           Write-Host ("Archive created successfully: " + $FILENAME + " (" + $sizeMB + " MB)")
+          
+          # Verify contents of the archive (list files in archive)
+          Write-Host "Verifying archive contents:"
+          7z l $FILENAME
         } else {
           Write-Error "Failed to create archive: $FILENAME"
           exit 1
