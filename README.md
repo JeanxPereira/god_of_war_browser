@@ -8,12 +8,12 @@
 A tool that allows browsing and investigating file formats of the game.
 Some functions are broken on the *Japanese version of the game (NTSC-J)*.
 
-### [Download latest build](https://ci.appveyor.com/project/mogaika/god-of-war-browser/branch/master/artifacts)
+### [Download latest build](https://github.com/JeanxPereira/god_of_war_browser/releases)
 
 ### [Join Discord](https://discord.gg/u6x3Z9v6Ed)
 
 ## Instructions
-- Download and unzip [latest build](https://ci.appveyor.com/project/mogaika/god-of-war-browser/branch/master/artifacts)
+- Download and unzip [latest build](https://github.com/JeanxPereira/god_of_war_browser/releases)
 - Open a console window and launch the binary with chosen parameters:
   - Archive source
     - ```-iso "Path_to_ISO_file"``` if you have an .iso file. Detection of second layer implemented (it is not supported by almost every virtual drive software)
