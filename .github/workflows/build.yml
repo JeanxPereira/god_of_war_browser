@@ -5,6 +5,11 @@ on:
       - main
     tags:
       - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:  # Permite execução manual
 
 jobs:
   build:
@@ -26,11 +31,12 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.20'
+        cache: true
     
-    - name: Set up environment
+    - name: Verify environment
       run: |
-        echo $env:PATH
-        echo $env:GOPATH
+        echo "PATH: $env:PATH"
+        echo "GOPATH: $env:GOPATH"
         $env:PATH = "$env:GOPATH\bin;C:\go\bin;$env:PATH"
         go version
         go env
@@ -44,92 +50,98 @@ jobs:
     - name: Generate Version
       id: version
       run: |
-        # Check if there's a previous tag/version
-        git fetch --tags
-        $LAST_TAG = $(git tag -l "v*" | Sort-Object -Property {[version]::new($_.TrimStart("v").PadRight(8,'0'))} -Descending | Select-Object -First 1)
-        
-        # If no previous tag exists, start with v0.0.1
-        if ([string]::IsNullOrEmpty($LAST_TAG)) {
-          $VERSION="v0.0.1"
+        # Check if workflow was triggered by a tag
+        if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+          # Use the tag as version
+          $VERSION = "${{ github.ref }}".Replace("refs/tags/", "")
         } else {
-          # Extract version components
-          $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
-          $MAJOR = [int]$COMPONENTS[0]
-          $MINOR = [int]$COMPONENTS[1]
-          $PATCH = [int]$COMPONENTS[2]
+          # Check if there's a previous tag/version
+          git fetch --tags
+          $LAST_TAG = $(git tag -l "v*" | Sort-Object -Property {[version]::new($_.TrimStart("v").PadRight(8,'0'))} -Descending | Select-Object -First 1)
           
-          # Increment PATCH
-          $PATCH++
-          
-          # If PATCH > 9, increment MINOR and reset PATCH
-          if ($PATCH -gt 9) {
-            $MINOR++
-            $PATCH = 0
+          # If no previous tag exists, start with v0.0.1
+          if ([string]::IsNullOrEmpty($LAST_TAG)) {
+            $VERSION="v0.0.1"
+          } else {
+            # Extract version components
+            $COMPONENTS = $LAST_TAG.TrimStart("v").Split(".")
+            $MAJOR = [int]$COMPONENTS[0]
+            $MINOR = [int]$COMPONENTS[1]
+            $PATCH = [int]$COMPONENTS[2]
+            
+            # Increment PATCH
+            $PATCH++
+            
+            # If PATCH > 9, increment MINOR and reset PATCH
+            if ($PATCH -gt 9) {
+              $MINOR++
+              $PATCH = 0
+            }
+            
+            # If MINOR > 9, increment MAJOR and reset MINOR
+            if ($MINOR -gt 9) {
+              $MAJOR++
+              $MINOR = 0
+            }
+            
+            $VERSION = "v$MAJOR.$MINOR.$PATCH"
           }
-          
-          # If MINOR > 9, increment MAJOR and reset MINOR
-          if ($MINOR -gt 9) {
-            $MAJOR++
-            $MINOR = 0
-          }
-          
-          $VERSION = "v$MAJOR.$MINOR.$PATCH"
         }
         
         echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
-        echo "Version: $VERSION"
+        echo "Generated version: $VERSION"
+    
+    - name: Verify required files
+      run: |
+        $REQUIRED_FILES = @(
+          "god_of_war_browser.exe",
+          "web",
+          "font_aliases.cfg",
+          "font_aliases.ru.cp1251.cfg"
+        )
+        
+        $MISSING_FILES = @()
+        
+        foreach ($FILE in $REQUIRED_FILES) {
+          if (-Not (Test-Path $FILE)) {
+            $MISSING_FILES += $FILE
+          }
+        }
+        
+        if ($MISSING_FILES.Count -gt 0) {
+          Write-Error "Missing required files: $($MISSING_FILES -join ', ')"
+          exit 1
+        } else {
+          Write-Host "All required files verified successfully"
+        }
     
     - name: Create Archive
       run: |
         $VERSION="${{ steps.version.outputs.VERSION }}"
         
-        # Create zip file with requested format: god_of_war_browser-v0.1.0.zip
+        # Create zip file with requested format
         $FILENAME="god_of_war_browser-$VERSION.zip"
         
-        # Ensure the web folder is included in the artifact
-        $REPO_DIR = $(Get-Location)
-        Write-Host "Current directory: $REPO_DIR"
-        
-        if (Test-Path "web") {
-          Write-Host "Web folder found in current directory"
-          7z a "$FILENAME" -r web -x!*.go
-        } elseif (Test-Path "c:\gopath\src\github.com\mogaika\god_of_war_browser\web") {
-          Write-Host "Web folder found in gopath"
-          7z a "$FILENAME" -r c:\gopath\src\github.com\mogaika\god_of_war_browser\web -x!*.go
-        } else {
-          Write-Host "Web folder not found directly. Attempting to get from repository..."
-          
-          if (-Not (Test-Path "$REPO_DIR\web")) {
-            New-Item -ItemType Directory -Path "$REPO_DIR\web" -Force
-            
-            try {
-              git clone --depth=1 --filter=blob:none --sparse https://github.com/mogaika/god_of_war_browser.git temp-repo
-              cd temp-repo
-              git sparse-checkout set web
-              Copy-Item -Path "web\*" -Destination "$REPO_DIR\web" -Recurse -Force
-              cd $REPO_DIR
-              Remove-Item -Path "temp-repo" -Recurse -Force
-              
-              7z a "$FILENAME" -r web -x!*.go
-              Write-Host "Web folder successfully obtained from repository"
-            } catch {
-              Write-Error "Unable to get web folder: $_"
-              exit 1
-            }
-          } else {
-            Write-Error "Web directory not found in any expected location"
-            exit 1
-          }
-        }
-        
-        # Add other files to the zip
+        # Create the archive with all required files
+        7z a "$FILENAME" -r web -x!*.go
         7z a "$FILENAME" god_of_war_browser.exe
         7z a "$FILENAME" font_aliases.cfg
         7z a "$FILENAME" font_aliases.ru.cp1251.cfg
-        7z a "$FILENAME" LOCALIZATION.md
-        7z a "$FILENAME" README.md
-        7z a "$FILENAME" hashes.dump.txt
-        7z a "$FILENAME" strings.dump.txt
+        
+        # Add optional files if they exist
+        $OPTIONAL_FILES = @(
+          "LOCALIZATION.md",
+          "README.md",
+          "hashes.dump.txt",
+          "strings.dump.txt"
+        )
+        
+        foreach ($FILE in $OPTIONAL_FILES) {
+          if (Test-Path $FILE) {
+            7z a "$FILENAME" $FILE
+            Write-Host "Added optional file: $FILE"
+          }
+        }
         
         echo "ARCHIVE_PATH=$FILENAME" >> $env:GITHUB_ENV
     
@@ -138,9 +150,10 @@ jobs:
       with:
         name: god_of_war_browser-${{ steps.version.outputs.VERSION }}
         path: ${{ env.ARCHIVE_PATH }}
+        retention-days: 30
     
     - name: Tag Version
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
       run: |
         # Configure git for creating a new tag
         git config --global user.name 'GitHub Actions'
@@ -165,6 +178,7 @@ jobs:
         files: ${{ env.ARCHIVE_PATH }}
         draft: false
         prerelease: false
+        make_latest: true  # Marca cada nova release como "latest"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
