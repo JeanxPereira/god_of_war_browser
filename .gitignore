@@ -12,3 +12,19 @@
 /vendor
 /*.log
 
+# Windows
+nul
+
+# Logs
+applogs/
+*.log
+
+# Dev / local
+.claude/
+.env
+.env.local
+
+# Build / temp
+dist/
+build/
+tmp/
