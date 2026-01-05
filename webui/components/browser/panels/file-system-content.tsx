@@ -1,14 +1,30 @@
 "use client"
 
 import { Download } from "lucide-react"
-import { useBrowser } from "@/context/browser-context"
+import { useBrowserStore } from "@/lib/store"
+import { useShallow } from 'zustand/react/shallow'
+
 import { useFileSystem } from "@/hooks/use-api"
 import { TreeNodeItem } from "@/components/browser/tree-node-item"
 import type { FileNode } from "@/types/browser-types"
 
 export function FileSystemContent() {
-  const { selectedFsFile, setSelectedFsFile, setSelectedPackFile, setSelectedPackChildren, setActivePackName } =
-    useBrowser()
+  const { 
+    selectedFsFile, 
+    setSelectedFsFile, 
+    setSelectedPackFile, 
+    setSelectedPackChildren, 
+    setActivePackName 
+  } = useBrowserStore(
+    useShallow((state) => ({
+      selectedFsFile: state.selectedFsFile,
+      setSelectedFsFile: state.setSelectedFsFile,
+      setSelectedPackFile: state.setSelectedPackFile,
+      setSelectedPackChildren: state.setSelectedPackChildren,
+      setActivePackName: state.setActivePackName
+    }))
+  )
+
   const { data, isLoading, isError, error, refetch } = useFileSystem()
   const fileTree = data ?? []
 

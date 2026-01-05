@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { Filter, Download } from "lucide-react"
-import { useBrowser } from "@/context/browser-context"
+import { useBrowserStore } from "@/lib/store"
+import { useShallow } from 'zustand/react/shallow'
+
 import { usePackContents } from "@/hooks/use-api"
 import { LEGACY_BASE_URL } from "@/lib/browser-constants"
 import { TreeNodeItem } from "@/components/browser/tree-node-item"
@@ -62,7 +64,20 @@ export function TreeContent() {
     setSelectedPackFile,
     setSelectedPackChildren,
     setSelectedTreeNode,
-  } = useBrowser()
+  } = useBrowserStore(
+    useShallow((state) => ({
+      treeFilter: state.treeFilter,
+      setTreeFilter: state.setTreeFilter,
+      treeSelectors: state.treeSelectors,
+      setTreeSelectors: state.setTreeSelectors,
+      activePackName: state.activePackName,
+      selectedPackFile: state.selectedPackFile,
+      setSelectedPackFile: state.setSelectedPackFile,
+      setSelectedPackChildren: state.setSelectedPackChildren,
+      setSelectedTreeNode: state.setSelectedTreeNode,
+    }))
+  )
+
   const {
     data: packFiles,
     isLoading: isPackLoading,
@@ -70,6 +85,7 @@ export function TreeContent() {
     error: packError,
     refetch: refetchPack,
   } = usePackContents(activePackName)
+  
   const {
     data: legacyTree,
     isLoading: isTreeLoading,
@@ -85,9 +101,9 @@ export function TreeContent() {
 
   const setTreeMode = useCallback(
     (mode: "nodes" | "tags") => {
-      setTreeSelectors((prev) => prev.map((s) => ({ ...s, active: s.id === mode })))
+      setTreeSelectors(treeSelectors.map((s) => ({ ...s, active: s.id === mode })))
     },
-    [setTreeSelectors],
+    [setTreeSelectors, treeSelectors]
   )
 
   const packFileById = useMemo(() => {
@@ -120,7 +136,6 @@ export function TreeContent() {
         .map((childIndex) => buildNode(childIndex))
         .filter(Boolean) as FileNode[]
 
-      // const displayName = `${node.Tag.Id.toString().padStart(4, "0")}.${node.Tag.Name}`
       const displayName = `${node.Tag.Name}`
       return {
         id: String(node.Tag.Id),
@@ -207,9 +222,73 @@ export function TreeContent() {
     [resolvePackFile],
   )
 
+  const findPathToNode = useCallback(
+    (nodes: FileNode[] | undefined, targetId: string, path: FileNode[] = []): FileNode[] | null => {
+      if (!nodes) return null
+      for (const n of nodes) {
+        const newPath = [...path, n]
+        if (n.id === targetId) return newPath
+        const found = findPathToNode(n.children, targetId, newPath)
+        if (found) return found
+      }
+      return null
+    },
+    []
+  )
+
   const handleSelect = (node: FileNode) => {
     const packFile = resolvePackFile(node)
-    const childPackFiles = collectChildPackFiles(node)
+
+    const path = treeMode === "nodes" ? findPathToNode(treeNodes, node.id) || [] : []
+    const parent = path.length > 1 ? path[path.length - 2] : null
+    const grandParent = path.length > 2 ? path[path.length - 3] : null
+
+    // Base: filhos diretos
+    let childPackFiles = collectChildPackFiles(node)
+
+    if (treeMode === "nodes") {
+      // Para folhas, herdamos filhos do pai (para pegar MAT_* internos duplicados)
+      if (!childPackFiles.length && parent) {
+        childPackFiles = collectChildPackFiles(parent)
+      }
+
+      // Acrescenta materiais MAT_* corretos (0x0008) fora do wrapper (irmãos no nível do pai/avô)
+      const preferMatByName: Record<string, PackFile> = {}
+      const addFrom = (nodes?: FileNode[]) => {
+        nodes?.forEach((sibling) => {
+          const nameUpper = sibling.name?.toUpperCase?.() || ""
+          const isMat = nameUpper.startsWith("MAT_")
+          const pf = resolvePackFile(sibling)
+          if (!isMat || !pf) return
+          const current = preferMatByName[pf.name]
+          // Prefira o que tiver type 0x0008
+          if (!current || current.type.toLowerCase() !== "0x0008") {
+            if (pf.type?.toLowerCase?.() === "0x0008") {
+              preferMatByName[pf.name] = pf
+            } else if (!current) {
+              preferMatByName[pf.name] = pf
+            }
+          }
+        })
+      }
+
+      addFrom(parent?.children)
+      if (grandParent && grandParent !== parent) {
+        addFrom(grandParent.children)
+      } else if (!parent) {
+        addFrom(treeNodes)
+      }
+
+      if (Object.keys(preferMatByName).length) {
+        const seen = new Set<string>()
+        childPackFiles = [...childPackFiles, ...Object.values(preferMatByName)].filter((pf) => {
+          if (seen.has(pf.id)) return false
+          seen.add(pf.id)
+          return true
+        })
+      }
+    }
+
     if (packFile) {
       setSelectedPackFile(packFile)
     } else {

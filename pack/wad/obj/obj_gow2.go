@@ -37,7 +37,10 @@ func NewFromDataGow2(buf []byte, objName string) (*Object, error) {
 
 	// called := false
 
-	log.Printf("mat1 %d mat2 %d mat3 %d", mat1count, mat2count, mat3count)
+	// verbose log spammed per object; keep only when needed for debugging
+	if false {
+		log.Printf("mat1 %d mat2 %d mat3 %d", mat1count, mat2count, mat3count)
+	}
 
 	invid := int16(0)
 	for i := range obj.Joints {

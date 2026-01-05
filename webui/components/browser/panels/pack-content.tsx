@@ -2,13 +2,29 @@
 
 import { useCallback, useMemo } from "react"
 import { Filter, Download } from "lucide-react"
-import { useBrowser } from "@/context/browser-context"
+import { useBrowserStore } from "@/lib/store" // Store Zustand
+import { useShallow } from "zustand/react/shallow"
 import { useFileSystem } from "@/hooks/use-api"
 import type { FileNode } from "@/types/browser-types"
 
 export function PackContent() {
-  const { packFilter, setPackFilter, setSelectedPackFile, setSelectedPackChildren, activePackName, setActivePackName } =
-    useBrowser()
+  // Conexão com Store via seletores (com useShallow para performance)
+  const { 
+    packFilter, 
+    setPackFilter, 
+    activePackName, 
+    setActivePackName, 
+    resetPackSelection 
+  } = useBrowserStore(
+    useShallow((state) => ({
+      packFilter: state.packFilter,
+      setPackFilter: state.setPackFilter,
+      activePackName: state.activePackName,
+      setActivePackName: state.setActivePackName,
+      resetPackSelection: state.resetPackSelection
+    }))
+  )
+
   const { data, isLoading, isError, error, refetch } = useFileSystem()
 
   const flattenFiles = useCallback((nodes: FileNode[]): FileNode[] => {
@@ -25,16 +41,18 @@ export function PackContent() {
   }, [])
 
   const files = useMemo(() => (data ? flattenFiles(data) : []), [data, flattenFiles])
-  const filteredFiles = files.filter(
-    (f) =>
-      f.name.toLowerCase().includes(packFilter.toLowerCase()) ||
-      f.extension?.toLowerCase().includes(packFilter.toLowerCase()),
-  )
+  
+  const filteredFiles = useMemo(() => {
+    return files.filter(
+      (f) =>
+        f.name.toLowerCase().includes(packFilter.toLowerCase()) ||
+        f.extension?.toLowerCase().includes(packFilter.toLowerCase()),
+    )
+  }, [files, packFilter])
 
   const handleSelect = (file: FileNode) => {
     setActivePackName(file.name)
-    setSelectedPackFile(null)
-    setSelectedPackChildren([])
+    resetPackSelection() // Substitui as chamadas individuais de limpar seleção
   }
 
   return (

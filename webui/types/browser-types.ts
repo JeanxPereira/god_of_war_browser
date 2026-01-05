@@ -107,6 +107,7 @@ export type ViewportOptions = {
   showLights: boolean
   backfaceCulling: boolean
   enableAnimation: boolean
+  disableMaterials: boolean
 }
 
 export type TreeSelector = {

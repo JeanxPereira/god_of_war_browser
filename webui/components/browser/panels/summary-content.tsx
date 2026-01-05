@@ -1,12 +1,32 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useBrowser } from "@/context/browser-context"
+// REMOVA: import { useBrowser } from "@/context/browser-context"
+// ADICIONE:
+import { useBrowserStore } from "@/lib/store"
+import { useShallow } from "zustand/react/shallow"
+
 import { LEGACY_BASE_URL } from "@/lib/browser-constants"
 import type { FileNode, PackFile } from "@/types/browser-types"
 
 export function SummaryContent() {
-  const { selectedFsFile, selectedPackFile, selectedTreeNode, activePackName } = useBrowser()
+  // SUBSTITUIÇÃO AQUI:
+  const { 
+    selectedFsFile, 
+    selectedPackFile, 
+    selectedTreeNode, 
+    activePackName,
+    setIsolatedMeshName
+  } = useBrowserStore(
+    useShallow((state) => ({
+      selectedFsFile: state.selectedFsFile,
+      selectedPackFile: state.selectedPackFile,
+      selectedTreeNode: state.selectedTreeNode,
+      activePackName: state.activePackName,
+      setIsolatedMeshName: state.setIsolatedMeshName,
+    }))
+  )
+
   const selected = selectedTreeNode || selectedPackFile || selectedFsFile
   const [legacyData, setLegacyData] = useState<any | null>(null)
   const [isLegacyLoading, setIsLegacyLoading] = useState(false)
@@ -18,6 +38,7 @@ export function SummaryContent() {
       setLegacyData(null)
       setLegacyError(null)
       setIsLegacyLoading(false)
+      setIsolatedMeshName(null)
       return
     }
 
@@ -62,7 +83,7 @@ export function SummaryContent() {
   const isMesh = isPackFile && (selected as PackFile).type?.toLowerCase() === "0x0001"
 
   const materialRows: Array<{ label: string; value: string }> = []
-  const objectRows: Array<{ label: string; value: string }> = []
+  const objectRows: Array<{ label: string; value: string; name: string }> = []
 
   if (legacyData?.Materials?.length) {
     legacyData.Materials.forEach((mat: any, idx: number) => {
@@ -78,9 +99,12 @@ export function SummaryContent() {
     legacyData.Parts.forEach((part: any, pIdx: number) => {
       part?.Groups?.forEach((group: any, gIdx: number) => {
         group?.Objects?.forEach((obj: any, oIdx: number) => {
+          const matId = obj?.MaterialId ?? 0
+          const meshName = `p${pIdx}_g${gIdx}_o${oIdx}m${matId}`
           objectRows.push({
             label: `P${pIdx} G${gIdx} O${oIdx}`,
-            value: `mat ${obj?.MaterialId ?? "N/A"} | inst ${obj?.InstancesCount ?? 1} | layers ${obj?.TextureLayersCount ?? 1}`,
+            value: `mat ${matId} | inst ${obj?.InstancesCount ?? 1} | layers ${obj?.TextureLayersCount ?? 1}`,
+            name: meshName,
           })
         })
       })
@@ -140,17 +164,19 @@ export function SummaryContent() {
               </div>
               <div className="space-y-1">
                 <div className="text-[10px] text-muted-foreground font-mono">Objects: {objectRows.length || 0}</div>
-                {objectRows.slice(0, 20).map((row) => (
+                {objectRows.slice(0, 30).map((row) => (
                   <div
                     key={row.label}
-                    className="flex items-center justify-between text-[11px] font-mono border border-border/50 px-2 py-1 rounded bg-muted/40"
+                    className="flex items-center justify-between text-[11px] font-mono border border-border/50 px-2 py-1 rounded bg-muted/40 hover:border-primary/60"
+                    onMouseEnter={() => setIsolatedMeshName(row.name)}
+                    onMouseLeave={() => setIsolatedMeshName(null)}
                   >
                     <span className="text-primary">{row.label}</span>
                     <span className="text-muted-foreground">{row.value}</span>
                   </div>
                 ))}
-                {objectRows.length > 20 && (
-                  <div className="text-[10px] text-muted-foreground font-mono">+{objectRows.length - 20} more</div>
+                {objectRows.length > 30 && (
+                  <div className="text-[10px] text-muted-foreground font-mono">+{objectRows.length - 30} more</div>
                 )}
               </div>
             </>

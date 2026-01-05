@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
+import { ChromePicker, ColorResult } from "react-color"
 import { Scene } from "./Scene"
 import { ViewportControls } from "./Controls"
 
@@ -20,10 +21,16 @@ type ViewportContentProps = {
   packName?: string | null
   backfaceCulling?: boolean
   onToggleBackfaceCulling?: () => void
+  materialsDisabled?: boolean
+  onToggleMaterials?: () => void
+  isolatedMeshName?: string | null
 }
 
-export function ViewportContent({ selectedResource, childResources, packName, backfaceCulling = false, onToggleBackfaceCulling }: ViewportContentProps) {
+export function ViewportContent({ selectedResource, childResources, packName, backfaceCulling = false, onToggleBackfaceCulling, materialsDisabled = false, onToggleMaterials, isolatedMeshName }: ViewportContentProps) {
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [backgroundColor, setBackgroundColor] = useState("#0a0a0a")
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false)
+  const [renderColorPicker, setRenderColorPicker] = useState(false)
   const cameraControlsRef = useRef<any>(null)
 
   // Debug: log quando componente monta e quando recurso muda
@@ -67,6 +74,26 @@ export function ViewportContent({ selectedResource, childResources, packName, ba
     console.log('[ViewportContent] Export clicked (not implemented yet)')
   }, [])
 
+  const handleToggleColorPicker = useCallback(() => {
+    setIsColorPickerOpen((prev) => !prev)
+  }, [])
+
+  const handleBackgroundColorChange = useCallback((color: ColorResult) => {
+    setBackgroundColor(color.hex)
+  }, [])
+
+  // Controla montagem/desmontagem do picker para permitir anima‡Æo de sa¡da
+  useEffect(() => {
+    if (isColorPickerOpen) {
+      setRenderColorPicker(true)
+      return
+    }
+
+    if (!renderColorPicker) return
+    const timeout = setTimeout(() => setRenderColorPicker(false), 150)
+    return () => clearTimeout(timeout)
+  }, [isColorPickerOpen, renderColorPicker])
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 relative overflow-hidden">
@@ -76,7 +103,26 @@ export function ViewportContent({ selectedResource, childResources, packName, ba
           packName={packName}
           onCameraRef={handleCameraRef}
           backfaceCulling={backfaceCulling}
+          materialsDisabled={materialsDisabled}
+          isolatedMeshName={isolatedMeshName}
+          backgroundColor={backgroundColor}
         />
+
+        {renderColorPicker && (
+          <>
+            <div 
+              className="absolute inset-0 z-10" 
+              onClick={() => setIsColorPickerOpen(false)}
+            />
+            <div className={`absolute bottom-16 right-3 z-20 shadow-lg border border-border rounded bg-background duration-150 ${isColorPickerOpen ? "animate-in fade-in-0 zoom-in-95" : "animate-out fade-out-0 zoom-out-95"}`}>
+              <ChromePicker 
+                color={backgroundColor} 
+                onChange={handleBackgroundColorChange}
+                disableAlpha 
+              />
+            </div>
+          </>
+        )}
         
         {/* Info overlay quando nada selecionado */}
         {!selectedResource && (
@@ -109,6 +155,7 @@ export function ViewportContent({ selectedResource, childResources, packName, ba
           <div>Resource: {selectedResource ? 'YES' : 'NO'}</div>
           <div>Type: {selectedResource?.type || 'N/A'}</div>
           <div>Camera: {cameraControlsRef.current ? 'READY' : 'WAITING'}</div>
+          <div>Materials: {materialsDisabled ? 'OFF' : 'ON'}</div>
         </div>
       </div>
 
@@ -118,6 +165,10 @@ export function ViewportContent({ selectedResource, childResources, packName, ba
         onExport={handleExport}
         onToggleCulling={onToggleBackfaceCulling}
         isCullingEnabled={backfaceCulling}
+        onToggleMaterials={onToggleMaterials}
+        areMaterialsDisabled={materialsDisabled}
+        backgroundColor={backgroundColor}
+        onToggleBackgroundPicker={handleToggleColorPicker}
       />
     </div>
   )

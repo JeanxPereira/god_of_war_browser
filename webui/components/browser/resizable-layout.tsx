@@ -22,23 +22,20 @@ export const ResizableLayout = memo(function ResizableLayout({
   const maximizedPanel = layout.panels.find((p) => p.isMaximized && !p.isHidden)
   const visiblePanels = useMemo(() => layout.panels.filter((p) => !p.isHidden), [layout.panels])
 
+  // gridTemplateColumns inicial (depois é manipulado via DOM no resize)
   const gridTemplateColumns = useMemo(() => {
     if (maximizedPanel) return "1fr"
-
     const visibleColumns = new Set(visiblePanels.map((p) => p.column))
     return layout.columns.map((width, idx) => (visibleColumns.has(idx) ? `${width}%` : "0fr")).join(" ")
   }, [layout.columns, visiblePanels, maximizedPanel])
 
   const resizeHandles = useMemo(() => {
     if (maximizedPanel) return []
-
     const handles: number[] = []
     const visibleColumns = [...new Set(visiblePanels.map((p) => p.column))].sort((a, b) => a - b)
-
     for (let i = 0; i < visibleColumns.length - 1; i++) {
       handles.push(visibleColumns[i])
     }
-
     return handles
   }, [visiblePanels, maximizedPanel])
 
@@ -63,7 +60,7 @@ export const ResizableLayout = memo(function ResizableLayout({
         gridTemplateColumns,
         gap: "0px",
         height: "100%",
-        willChange: isResizing ? "contents" : "auto",
+        willChange: isResizing ? "grid-template-columns" : "auto", // Otimização para o browser
       }}
     >
       {/* Panels */}
@@ -77,7 +74,7 @@ export const ResizableLayout = memo(function ResizableLayout({
               key={panel.id}
               className="h-full overflow-hidden min-w-0"
               style={{
-                contain: isResizing ? "strict" : "none",
+                contain: isResizing ? "strict" : "none", // Isola paint/layout durante resize
               }}
             >
               {renderPanel(panel.id)}
@@ -89,6 +86,7 @@ export const ResizableLayout = memo(function ResizableLayout({
       {!maximizedPanel &&
         handlePositions.map(({ index, left }) => (
           <div
+            id={`resize-handle-${index}`} // ID NECESSÁRIO para manipulação direta
             key={`resize-${index}`}
             className={`
               absolute top-0 bottom-0 w-1 z-30
@@ -106,7 +104,6 @@ export const ResizableLayout = memo(function ResizableLayout({
             }}
             onMouseDown={(e) => onColumnResize(index, e)}
           >
-            {/* Visual line indicator */}
             <div
               className={`
                 absolute top-0 bottom-0 left-1/2 w-px -translate-x-1/2
@@ -122,7 +119,8 @@ export const ResizableLayout = memo(function ResizableLayout({
         ))}
 
       {isResizing && <div className="fixed inset-0 z-50" style={{ cursor: "col-resize" }} />}
-
+      
+      {/* Tab Drag Overlay */}
       {dragState?.type === "tab" && dragState.isDraggingFar && (
         <div
           className="fixed pointer-events-none z-50"

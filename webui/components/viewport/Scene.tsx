@@ -1,8 +1,8 @@
 "use client"
 
-import { Canvas } from "@react-three/fiber"
+import { Canvas, useThree } from "@react-three/fiber"
 import { OrbitControls, Grid, GizmoHelper, GizmoViewport } from "@react-three/drei"
-import { Suspense, useEffect } from "react"
+import { Suspense, useEffect, memo } from "react"
 import * as THREE from "three"
 import { useMeshLoader } from "./useMeshLoader"
 import { MeshRenderer } from "./MeshRenderer"
@@ -23,16 +23,31 @@ type ViewportProps = {
   packName?: string | null
   onCameraRef?: (controls: any) => void
   backfaceCulling?: boolean
+  materialsDisabled?: boolean
+  isolatedMeshName?: string | null
+  backgroundColor?: string
 }
 
-function SceneContent({ selectedResource, childResources, packName, onCameraRef, backfaceCulling }: ViewportProps) {
-  // Debug: log quando recurso muda
+// Componente memoizado para evitar re-renderizações do conteúdo da cena
+// quando props irrelevantes do pai mudarem.
+const SceneContent = memo(function SceneContent({ 
+  selectedResource, 
+  childResources, 
+  packName, 
+  onCameraRef, 
+  backfaceCulling,
+  materialsDisabled,
+  isolatedMeshName,
+  backgroundColor = "#0a0a0a"
+}: ViewportProps) {
+  
+  // Log de debug mantido, mas controlado
   useEffect(() => {
-    console.log('[Scene] Selected resource changed:', selectedResource)
-    console.log('[Scene] Pack name:', packName)
-  }, [selectedResource, packName])
+    if (selectedResource || packName) {
+      console.log('[Scene] Loading resource:', { pack: packName, id: selectedResource?.id })
+    }
+  }, [selectedResource?.id, packName])
 
-  // Carregar malha se selecionada
   const { meshes, materials, isLoading, error } = useMeshLoader(
     packName || null,
     selectedResource?.id || null,
@@ -42,14 +57,86 @@ function SceneContent({ selectedResource, childResources, packName, onCameraRef,
     childResources || null
   )
 
+  const { invalidate, camera, controls, gl } = useThree((state) => ({
+    invalidate: state.invalidate,
+    camera: state.camera,
+    controls: state.controls as any,
+    gl: state.gl
+  }))
+
   useEffect(() => {
     if (meshes) {
-      console.log('[Scene] Meshes loaded:', meshes.length)
+      invalidate()
     }
-    if (error) {
-      console.error('[Scene] Mesh loading error:', error)
+  }, [meshes, invalidate])
+
+  // Auto enquadra os meshes carregados para garantir que fiquem visíveis.
+  useEffect(() => {
+    if (!meshes || meshes.length === 0) return
+
+    const sceneBox = new THREE.Box3()
+    let hasGeometry = false
+
+    meshes.forEach((mesh) => {
+      const geometry = mesh.geometry
+      if (!geometry) return
+
+      if (!geometry.boundingBox) {
+        geometry.computeBoundingBox()
+      }
+      if (!geometry.boundingBox) return
+
+      const meshBox = geometry.boundingBox.clone()
+
+      // Se a malha tem matriz (instância), aplicamos para considerar a posição real.
+      if (mesh.matrix) {
+        meshBox.applyMatrix4(mesh.matrix)
+      }
+
+      sceneBox.union(meshBox)
+      hasGeometry = true
+    })
+
+    if (!hasGeometry) return
+
+    const size = new THREE.Vector3()
+    const center = new THREE.Vector3()
+    sceneBox.getSize(size)
+    sceneBox.getCenter(center)
+
+    const maxDim = Math.max(size.x, size.y, size.z, 1)
+    const fitHeightDistance = maxDim / (2 * Math.tan((camera.fov * Math.PI) / 360))
+    const fitWidthDistance = fitHeightDistance / Math.max(camera.aspect, 0.1)
+    const distance = 1.2 * Math.max(fitHeightDistance, fitWidthDistance)
+
+    const direction = camera.position.clone().sub(center)
+    if (direction.lengthSq() < 1e-6) {
+      direction.set(1, 1, 1)
     }
-  }, [meshes, error])
+    direction.normalize()
+    const newPosition = center.clone().add(direction.multiplyScalar(distance))
+
+    camera.position.copy(newPosition)
+    camera.near = Math.max(distance / 50, 0.1)
+    camera.far = Math.max(distance * 50, camera.far)
+    camera.updateProjectionMatrix()
+
+    if (controls) {
+      // @ts-expect-error drei injeta controls no contexto
+      controls.target.copy(center)
+      // @ts-expect-error drei injeta controls no contexto
+      controls.update()
+    } else {
+      camera.lookAt(center)
+    }
+
+    invalidate()
+  }, [meshes, camera, controls, invalidate])
+
+  useEffect(() => {
+    gl.setClearColor(new THREE.Color(backgroundColor))
+    invalidate()
+  }, [gl, backgroundColor, invalidate])
 
   return (
     <>
@@ -71,10 +158,17 @@ function SceneContent({ selectedResource, childResources, packName, onCameraRef,
 
       {/* Renderizar malhas reais */}
       {meshes && meshes.length > 0 && (
-        <MeshRenderer meshes={meshes} backfaceCulling={backfaceCulling ?? false} materials={materials} />
+        <MeshRenderer 
+          meshes={meshes} 
+          backfaceCulling={backfaceCulling ?? false} 
+          materials={materialsDisabled ? null : materials} 
+          // Desliga shader custom em cenas grandes (ex: 0x800000) ou quando materiais estão off
+          useCustomShader={!materialsDisabled && selectedResource?.type?.toLowerCase?.() !== '0x800000' && selectedResource?.type?.toLowerCase?.() !== '0x80000001'}
+          isolatedMeshName={isolatedMeshName}
+        />
       )}
 
-      {/* Loading indicator */}
+      {/* Loading indicator (visual simples 3D) */}
       {isLoading && (
         <mesh position={[0, 1, 0]}>
           <sphereGeometry args={[0.5, 16, 16]} />
@@ -90,15 +184,12 @@ function SceneContent({ selectedResource, childResources, packName, onCameraRef,
         </mesh>
       )}
 
-      {/* Controls com ref */}
+      {/* Controls */}
       <OrbitControls 
         makeDefault 
-        ref={(ref) => {
-          if (ref && onCameraRef) {
-            console.log('[Scene] OrbitControls ref ready')
-            onCameraRef(ref)
-          }
-        }}
+        ref={onCameraRef}
+        dampingFactor={0.1}
+        rotateSpeed={0.5}
       />
       
       {/* Gizmo */}
@@ -110,40 +201,31 @@ function SceneContent({ selectedResource, childResources, packName, onCameraRef,
       </GizmoHelper>
     </>
   )
-}
+})
 
-export function Scene({ selectedResource, childResources, packName, onCameraRef, backfaceCulling = false }: ViewportProps) {
-  useEffect(() => {
-    console.log('[Scene Component] Mounted')
-    console.log('[Scene Component] Selected resource:', selectedResource)
-    console.log('[Scene Component] Pack name:', packName)
-  }, [])
-
-  useEffect(() => {
-    console.log('[Scene Component] Resource updated:', selectedResource)
-    console.log('[Scene Component] Pack name updated:', packName)
-  }, [selectedResource, packName])
-
+export function Scene(props: ViewportProps) {
   return (
-    <div className="w-full h-full bg-zinc-950">
+    <div className="w-full h-full" style={{ backgroundColor: props.backgroundColor || "#0a0a0a" }}>
       <Canvas
         shadows
+        // PERFORMANCE CRÍTICA: 'demand' significa que o loop de render para quando nada move.
+        // O Three.js só desenha se a câmera mover ou props mudarem.
+        frameloop="demand"
         camera={{ position: [-50, 50, -50], fov: 50 }}
-        gl={{ preserveDrawingBuffer: true }}
-        onCreated={({ gl, camera }) => {
-          console.log('[Canvas] Created')
-          console.log('[Canvas] Camera position:', camera.position)
-          console.log('[Canvas] WebGL version:', gl.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1')
+        gl={{ 
+          // PERFORMANCE CRÍTICA: 'false' economiza buffer swap. Só use true se precisar tirar print do canvas.
+          preserveDrawingBuffer: false,
+          powerPreference: "high-performance",
+          antialias: true,
+          alpha: false // Fundo opaco é mais rápido
+        }}
+        dpr={[1, 2]} // Limita pixel ratio para não fritar em telas Retina
+        onCreated={({ gl }) => {
+          console.log('[Canvas] Created with WebGL', gl.capabilities.isWebGL2 ? '2' : '1')
         }}
       >
         <Suspense fallback={null}>
-          <SceneContent
-            selectedResource={selectedResource}
-            childResources={childResources}
-            packName={packName}
-            onCameraRef={onCameraRef}
-            backfaceCulling={backfaceCulling}
-          />
+          <SceneContent {...props} />
         </Suspense>
       </Canvas>
     </div>

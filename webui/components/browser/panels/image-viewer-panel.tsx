@@ -17,7 +17,12 @@ import {
   Layers,
 } from "lucide-react"
 import { TooltipProvider, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useBrowser } from "@/context/browser-context"
+
+// REMOVA: import { useBrowser } from "@/context/browser-context"
+// ADICIONE:
+import { useBrowserStore } from "@/lib/store"
+import { useShallow } from "zustand/react/shallow"
+
 import { LEGACY_BASE_URL } from "@/lib/browser-constants"
 import type { TextureData, MaterialData, MaterialLayerData, MaterialTexture, PanelTab } from "@/types/browser-types"
 
@@ -25,6 +30,7 @@ const GRID_BACKGROUND_CLASS =
   "bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDIwIEwgMjAgMjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIwLjUiLz48cGF0aCBkPSJNIDIwIDAgTCAyMCAyMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzMzIiBzdHJva2Utd2lkdGg9IjAuNSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')]"
 
 function useLegacyTextureData(packName: string | null, nodeId: string | null) {
+  // ... (MANTENHA ESTA FUNÇÃO IGUAL) ...
   const [data, setData] = useState<TextureData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -36,22 +42,15 @@ function useLegacyTextureData(packName: string | null, nodeId: string | null) {
       setIsLoading(false)
       return
     }
-
     setIsLoading(true)
     setError(null)
-
     try {
       const response = await fetch(
         `${LEGACY_BASE_URL}/json/pack/${encodeURIComponent(packName)}/${encodeURIComponent(nodeId)}`,
       )
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const json = await response.json()
-      if (json?.error) {
-        throw new Error(json.error)
-      }
+      if (json?.error) throw new Error(json.error)
 
       if (json?.Data?.Images || json?.Images) {
         setData(json.Data || json)
@@ -85,6 +84,7 @@ function isTextureType(type: string | undefined): boolean {
 }
 
 function useLegacyMaterialData(packName: string | null, nodeId: string | null) {
+  // ... (MANTENHA ESTA FUNÇÃO IGUAL) ...
   const [data, setData] = useState<MaterialData | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -96,21 +96,15 @@ function useLegacyMaterialData(packName: string | null, nodeId: string | null) {
       setIsLoading(false)
       return
     }
-
     setIsLoading(true)
     setError(null)
-
     try {
       const response = await fetch(
         `${LEGACY_BASE_URL}/json/pack/${encodeURIComponent(packName)}/${encodeURIComponent(nodeId)}`,
       )
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const json = await response.json()
       const payload = json?.Data || json
-
       if (payload?.Mat || payload?.Textures || payload?.TexturesBlended) {
         setData(payload as MaterialData)
       } else {
@@ -137,12 +131,11 @@ function isMaterialType(type: string | undefined): boolean {
   return normalized === "0x0008" || normalized === "0x00000008" || normalized === "0x8" || normalized.includes("mat")
 }
 
+// ... (MANTENHA AS OUTRAS FUNÇÕES AUXILIARES IGUAIS: normalizeMaterialLayers, pickFromCollection, resolveTextureImage, toNormalizedColor, combineColors, getBlendMethod) ...
 function normalizeMaterialLayers(layers?: Array<MaterialLayerData> | Record<string, MaterialLayerData>) {
   if (!layers) return []
   if (Array.isArray(layers)) return layers
-  return Object.keys(layers)
-    .sort((a, b) => Number(a) - Number(b))
-    .map((key) => layers[key])
+  return Object.keys(layers).sort((a, b) => Number(a) - Number(b)).map((key) => layers[key])
 }
 
 function pickFromCollection<T>(collection: Array<T> | Record<string, T> | undefined, index: number): T | undefined {
@@ -169,14 +162,7 @@ function resolveTextureImage(texture?: MaterialTexture): ResolvedImage | null {
   if (!texture) return null
   const img = texture.Images?.[0]
   if (!img?.Image) return null
-
-  const hasAlpha =
-    !!img.HasAlpha ||
-    !!img.HaveAlpha ||
-    !!img.HaveTransparent ||
-    !!texture.HaveTransparent ||
-    !!texture.HasAlpha
-
+  const hasAlpha = !!img.HasAlpha || !!img.HaveAlpha || !!img.HaveTransparent || !!texture.HaveTransparent || !!texture.HasAlpha
   return {
     src: `data:image/png;base64,${img.Image}`,
     width: texture.Data?.Width,
@@ -198,43 +184,26 @@ function toNormalizedColor(color?: number[]): NormalizedColor {
   const maxValue = numericValues.length ? Math.max(...numericValues) : 1
   const useUnitScale = maxValue <= 1.001
   const scale = useUnitScale ? 255 : 1
-
   const clamp255 = (val: number | undefined, fallback: number) => {
     const raw = val === undefined ? fallback : val
     return Math.max(0, Math.min(255, Math.round(raw * scale)))
   }
-
   const r = clamp255(values[0], useUnitScale ? 1 : 255)
   const g = clamp255(values[1], useUnitScale ? 1 : 255)
   const b = clamp255(values[2], useUnitScale ? 1 : 255)
   const alphaRaw = values[3]
   const a = alphaRaw === undefined ? 1 : useUnitScale ? alphaRaw : Math.min(1, alphaRaw / 255)
-
-  return {
-    r,
-    g,
-    b,
-    a,
-    css: `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`,
-  }
+  return { r, g, b, a, css: `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})` }
 }
 
 function combineColors(base?: number[], layer?: number[]): NormalizedColor {
   const baseColor = toNormalizedColor(base)
   const layerColor = toNormalizedColor(layer)
-
   const r = Math.max(0, Math.min(255, Math.round((baseColor.r / 255) * (layerColor.r / 255) * 255)))
   const g = Math.max(0, Math.min(255, Math.round((baseColor.g / 255) * (layerColor.g / 255) * 255)))
   const b = Math.max(0, Math.min(255, Math.round((baseColor.b / 255) * (layerColor.b / 255) * 255)))
   const a = Number((baseColor.a * layerColor.a).toFixed(3))
-
-  return {
-    r,
-    g,
-    b,
-    a,
-    css: `rgba(${r}, ${g}, ${b}, ${a})`,
-  }
+  return { r, g, b, a, css: `rgba(${r}, ${g}, ${b}, ${a})` }
 }
 
 function getBlendMethod(parsed?: Record<string, boolean>): string {
@@ -247,7 +216,13 @@ function getBlendMethod(parsed?: Record<string, boolean>): string {
 }
 
 export function ImageViewerPanel() {
-  const { selectedPackFile, activePackName } = useBrowser()
+  // SUBSTITUIÇÃO AQUI:
+  const { selectedPackFile, activePackName } = useBrowserStore(
+    useShallow((state) => ({
+      selectedPackFile: state.selectedPackFile,
+      activePackName: state.activePackName,
+    }))
+  )
 
   const [activeTab, setActiveTab] = useState<string>("viewer")
   const [zoom, setZoom] = useState(1)
@@ -258,6 +233,9 @@ export function ImageViewerPanel() {
   const [materialViewMode, setMaterialViewMode] = useState<"base" | "blended">("base")
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // ... (RESTANTE DO CÓDIGO PERMANECE IDÊNTICO) ...
+  // A lógica abaixo não depende mais do contexto, pois já extraímos as variáveis da store.
+  
   const isTexture = isTextureType(selectedPackFile?.type)
   const isMaterial = isMaterialType(selectedPackFile?.type)
   const resourceKind = isTexture ? "texture" : isMaterial ? "material" : "unsupported"
